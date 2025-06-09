@@ -39,7 +39,7 @@ class Generator:
         self.iterator = iterator
 
 class Interpreter:
-    """Interprets XenonLang AST with full support for all constructs."""
+    """Interprets NeonLang AST with full support for all constructs."""
     def __init__(self, source: str, filename: str):
         self.source = source
         self.filename = filename

@@ -16,38 +16,55 @@ class Lexer:
         self.raw_string_start_line: int = 0
         self.raw_string_start_column: int = 0
 
-        # Prioritized token order (longer patterns first, then keywords, then single-char)
+        # Prioritized token order (longer patterns first, keywords, single-char, literals last)
         self.token_priority = [
             # Multi-character operators
             'EQUAL', 'NOT_EQUAL', 'LESS_EQUAL', 'GREATER_EQUAL', 'NULL_COALESCE', 'ELVIS',
             'INCREMENT', 'DECREMENT', 'PLUS_ASSIGN', 'MINUS_ASSIGN', 'MULTIPLY_ASSIGN',
-            'DIVIDE_ASSIGN', 'MODULO_ASSIGN', 'AND', 'OR', 'SHL', 'SHR', 'BIT_AND',
-            'BIT_OR', 'BIT_XOR', 'ARROW', 'NULLABLE',
-            # New operators
-            'DEREF', 'REFERENCE',
+            'DIVIDE_ASSIGN', 'MODULO_ASSIGN', 'BIT_AND_ASSIGN', 'BIT_OR_ASSIGN', 'BIT_XOR_ASSIGN',
+            'AND', 'OR', 'SHL', 'SHR', 'BIT_AND', 'BIT_OR', 'BIT_XOR', 'ARROW', 'DOUBLE_COLON',
+            'NULLABLE', 'DEREF', 'REFERENCE',
             # Keywords
             'IF', 'ELSE', 'WHEN', 'WHILE', 'FOR', 'DO', 'SWITCH', 'CASE', 'DEFAULT',
-            'BREAK', 'CONTINUE', 'RETURN', 'TRY', 'CATCH', 'FINALLY', 'THROW',
+            'BREAK', 'CONTINUE', 'RETURN', 'TRY', 'CATCH', 'FINALLY', 'THROW', 'ASSERT',
             'FUNCTION', 'CLASS', 'STRUCT', 'DATA', 'SEALED', 'OBJECT', 'COMPANION',
             'INTERFACE', 'ENUM', 'VAR', 'VAL', 'CONST', 'STATIC', 'PUBLIC', 'PRIVATE',
             'PROTECTED', 'INTERNAL', 'ABSTRACT', 'NEW', 'THIS', 'SUPER', 'INSTANCEOF',
             'LAMBDA', 'IMPORT', 'FROM', 'AS', 'PACKAGE', 'NAMESPACE', 'EXPORT',
             'ASYNC', 'AWAIT', 'YIELD', 'ALLOC', 'FREE', 'TRUE', 'FALSE', 'NULL',
-            'PRINT', 'INPUT', 'READLINE',
+            'PRINT', 'INPUT', 'READLINE', 'DATETIME', 'TIMEDELTA', 'NOW', 'SOCKET', 'HTTP',
             # Types
-            'INT', 'FLOAT', 'DOUBLE', 'BOOLEAN', 'STRING_TYPE', 'CHAR_TYPE', 'BYTE',
-            'UNIT', 'NOTHING', 'ANY',
-            # Literals (handled separately)
-            'NUMBER', 'STRING', 'RAW_STRING', 'CHAR', 'HEX', 'BYTE_LITERAL',
+            'INT', 'FLOAT', 'DOUBLE', 'BOOLEAN', 'STRING_TYPE', 'VOID', 'ANY', 'UNIT',
+            'NOTHING', 'LIST', 'MAP', 'SET', 'ARRAY',
             # Single-character operators and delimiters
             'ASSIGN', 'LESS', 'GREATER', 'PLUS', 'MINUS', 'MULTIPLY', 'DIVIDE',
             'MODULO', 'NOT', 'BIT_NOT', 'SEMICOLON', 'COLON', 'COMMA', 'DOT',
             'LPAREN', 'RPAREN', 'LBRACE', 'RBRACE', 'LBRACKET', 'RBRACKET',
             # Special tokens
             'ANNOTATION', 'COMMENT', 'BLOCK_COMMENT', 'SPACE',
+            # Literals (handled separately)
+            'NUMBER', 'STRING', 'RAW_STRING', 'CHAR', 'HEX', 'BYTE',
             # Identifiers (must be last)
             'VARIABLE'
         ]
+
+        # Set of keyword values for fast lookup (using regex as value for keywords)
+        self.keywords = {
+            token_types_list[name].regex.lstrip(r'\b').rstrip(r'\b')  # Strip \b for simple keywords
+            for name in self.token_priority
+            if name in token_types_list and name not in (
+                'NUMBER', 'STRING', 'RAW_STRING', 'CHAR', 'HEX', 'BYTE',
+                'VARIABLE', 'ANNOTATION', 'COMMENT', 'BLOCK_COMMENT', 'SPACE',
+                'EQUAL', 'NOT_EQUAL', 'LESS_EQUAL', 'GREATER_EQUAL', 'NULL_COALESCE', 'ELVIS',
+                'INCREMENT', 'DECREMENT', 'PLUS_ASSIGN', 'MINUS_ASSIGN', 'MULTIPLY_ASSIGN',
+                'DIVIDE_ASSIGN', 'MODULO_ASSIGN', 'BIT_AND_ASSIGN', 'BIT_OR_ASSIGN', 'BIT_XOR_ASSIGN',
+                'AND', 'OR', 'SHL', 'SHR', 'BIT_AND', 'BIT_OR', 'BIT_XOR', 'ARROW', 'DOUBLE_COLON',
+                'NULLABLE', 'DEREF', 'REFERENCE',
+                'ASSIGN', 'LESS', 'GREATER', 'PLUS', 'MINUS', 'MULTIPLY', 'DIVIDE',
+                'MODULO', 'NOT', 'BIT_NOT', 'SEMICOLON', 'COLON', 'COMMA', 'DOT',
+                'LPAREN', 'RPAREN', 'LBRACE', 'RBRACE', 'LBRACKET', 'RBRACKET'
+            )
+        }
 
         # Compile regex patterns
         self.patterns: List[Tuple[TokenType, re.Pattern]] = [
@@ -56,15 +73,16 @@ class Lexer:
             if name in token_types_list
         ]
 
-        # Specialized patterns for literals
-        self.number_pattern = re.compile(r'^-?(?:\d+\.\d*[eE][+-]?\d+|\d+\.\d+|\d+)(?!\w)')
+        # Specialized patterns for literals and comments
+        self.number_pattern = re.compile(r'^-?(?:\d+\.\d+[eE][+-]?\d+|\d+\.\d+|\d+)(?!\w)')
         self.string_pattern = re.compile(r'^"([^"\\]*(?:\\.[^"\\]*)*)"')
-        self.raw_string_pattern = re.compile(r'^"""')
+        self.raw_string_pattern = re.compile(r'^"""(?:[^"]|"[^"]|""[^"])*"""')
         self.char_pattern = re.compile(r"^'([^'\\]|\\.)'")
-        self.hex_pattern = re.compile(r'^0[xX][0-9a-fA-F]+(?!\w)')
+        self.hex_pattern = re.compile(r'^0x[0-9a-fA-F]+(?!\w)')
         self.byte_pattern = re.compile(r'^0b[0-1]+(?!\w)')
         self.variable_pattern = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*(?!\w)')
         self.annotation_pattern = re.compile(r'^@[a-zA-Z_][a-zA-Z0-9_]*(?!\w)')
+        self.comment_pattern = re.compile(r'^(?:#|//).*')
 
     def update_position(self, value: str) -> None:
         """Updates line and column numbers based on the token value."""
@@ -105,7 +123,15 @@ class Lexer:
             self.update_position(value)
             return True
 
-        # Try specialized literal patterns first
+        # Try comment
+        if comment_match := self.comment_pattern.match(substring):
+            value = comment_match.group(0)
+            token = Token(token_types_list['COMMENT'], value, self.pos, self.line, self.column)
+            self.token_list.append(token)
+            self.update_position(value)
+            return True
+
+        # Try specialized literal patterns
         if token := self.try_literals(substring):
             self.token_list.append(token)
             return True
@@ -120,15 +146,11 @@ class Lexer:
 
         # Try general token patterns
         for token_type, pattern in self.patterns:
-            if token_type.name in ('NUMBER', 'STRING', 'RAW_STRING', 'CHAR', 'HEX', 'BYTE_LITERAL', 'VARIABLE', 'ANNOTATION'):
+            if token_type.name in ('NUMBER', 'STRING', 'RAW_STRING', 'CHAR', 'HEX', 'BYTE', 'VARIABLE', 'ANNOTATION', 'COMMENT', 'BLOCK_COMMENT'):
                 continue  # Handled separately
             if match := pattern.match(substring):
                 value = match.group(0)
-                if token_type.name == 'RAW_STRING':
-                    self.state = 'RAW_STRING'
-                    self.raw_string_start_line = self.line
-                    self.raw_string_start_column = self.column
-                elif token_type.name == 'BLOCK_COMMENT':
+                if token_type.name == 'BLOCK_COMMENT':
                     self.state = 'BLOCK_COMMENT'
                 token = Token(token_type, value, self.pos, self.line, self.column)
                 self.token_list.append(token)
@@ -173,12 +195,9 @@ class Lexer:
             self.update_position(value)
             return token
 
-        # Raw string start
+        # Raw string
         if match := self.raw_string_pattern.match(substring):
             value = match.group(0)
-            self.state = 'RAW_STRING'
-            self.raw_string_start_line = self.line
-            self.raw_string_start_column = self.column
             token = Token(token_types_list['RAW_STRING'], value, self.pos, self.line, self.column)
             self.update_position(value)
             return token
@@ -231,7 +250,7 @@ class Lexer:
                     self.line,
                     self.column
                 ))
-            token = Token(token_types_list['BYTE_LITERAL'], value, self.pos, self.line, self.column)
+            token = Token(token_types_list['BYTE'], value, self.pos, self.line, self.column)
             self.update_position(value)
             return token
 
@@ -239,19 +258,31 @@ class Lexer:
         if match := self.variable_pattern.match(substring):
             value = match.group(0)
             # Check if it's a keyword
-            for token_type, _ in self.patterns:
-                if token_type.name in self.token_priority and token_type.regex == value:
-                    token = Token(token_type, value, self.pos, self.line, self.column)
-                    break
-            else:
-                token = Token(token_types_list['VARIABLE'], value, self.pos, self.line, self.column)
+            cleaned_value = value.strip()
+            if cleaned_value in self.keywords:
+                for token_type, pattern in self.patterns:
+                    if pattern.match(value) and token_type.name in self.token_priority:
+                        if token_type.name not in ('NUMBER', 'STRING', 'RAW_STRING', 'CHAR', 'HEX', 'BYTE', 'VARIABLE', 'ANNOTATION'):
+                            token = Token(token_type, value, self.pos, self.line, self.column)
+                            self.update_position(value)
+                            return token
+                # If no matching token type found, it's an error
+                raise SyntaxError(format_error(
+                    "SyntaxError",
+                    f"Unexpected keyword '{value}' used as variable. Valid keywords: {', '.join(sorted(self.keywords))}",
+                    self.filename,
+                    self.code,
+                    self.line,
+                    self.column
+                ))
+            token = Token(token_types_list['VARIABLE'], value, self.pos, self.line, self.column)
             self.update_position(value)
             return token
 
         return None
 
     def handle_raw_string(self, substring: str) -> bool:
-        """Handles raw string content until closing triple quotes."""
+        """Handles raw string content."""
         end_match = re.search(r'"""', substring)
         if end_match:
             value = substring[:end_match.end()]
@@ -264,7 +295,7 @@ class Lexer:
             # Unclosed raw string
             raise SyntaxError(format_error(
                 "SyntaxError",
-                "Unclosed raw string starting at line " + str(self.raw_string_start_line),
+                f"Unclosed raw string starting at line {self.raw_string_start_line}",
                 self.filename,
                 self.code,
                 self.raw_string_start_line,
