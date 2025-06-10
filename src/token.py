@@ -30,17 +30,19 @@ token_types_list: Dict[str, TokenType] = {
     'RAW_STRING': TokenType('RAW_STRING', r'"""(?:[^"]|"[^"]|""[^"])*"""'),  # Multi-line raw strings
     'CHAR': TokenType('CHAR', r"'([^'\\]|\\.)'"),  # Single character literals
     'BYTE': TokenType('BYTE', r'0b[01]+(?!\w)'),  # Binary literals (e.g., 0b1010)
-    'HEX': TokenType('HEX', r'0x[0-9a-fA-F}+(?!\w)'),  # Hexadecimal literals
+    'HEX': TokenType('HEX', r'0x[0-9a-fA-F]+(?!\w)'),  # Hexadecimal literals
     'TRUE': TokenType('TRUE', r'true'),  # Boolean true
     'FALSE': TokenType('FALSE', r'false'),  # Boolean false
     'NULL': TokenType('NULL', r'null'),  # Null literal
 
     # === Identifiers ===
-    'VARIABLE': TokenType('VARIABLE', r'[a-zA-Z_][a-zA-Z0-9_]*(?!\w)*'),  # Keywords handled by lexer
+    'VARIABLE': TokenType('VARIABLE', r'[a-zA-Z_][a-zA-Z0-9_]*(?!\w)'),  # Keywords handled by lexer
 
     # === Operators ===
-    'ASSIGN': TokenType('ASSIGN', r'='),  'EQUAL': TokenType('EQUAL', r'=='),
-    'NOT_EQUAL': TokenType('NOT_EQUAL', r'!='),  'LESS': TokenType('LESS', r'<'),
+    'ASSIGN': TokenType('ASSIGN', r'='),
+    'EQUAL': TokenType('EQUAL', r'=='),
+    'NOT_EQUAL': TokenType('NOT_EQUAL', r'!='),
+    'LESS': TokenType('LESS', r'<'),
     'GREATER': TokenType('GREATER', r'>'),
     'LESS_EQUAL': TokenType('LESS_EQUAL', r'<='),
     'GREATER_EQUAL': TokenType('GREATER_EQUAL', r'>='),
@@ -62,7 +64,7 @@ token_types_list: Dict[str, TokenType] = {
     'ELVIS': TokenType('ELVIS', r'\?:'),
     'INCREMENT': TokenType('INCREMENT', r'\+\+'),
     'DECREMENT': TokenType('DECREMENT', r'--'),
-    'PLUS_ASSIGN':TokenType('PLUS_ASSIGN', r'\+='),
+    'PLUS_ASSIGN': TokenType('PLUS_ASSIGN', r'\+='),
     'MINUS_ASSIGN': TokenType('MINUS_ASSIGN', r'-='),
     'MULTIPLY_ASSIGN': TokenType('MULTIPLY_ASSIGN', r'\*='),
     'DIVIDE_ASSIGN': TokenType('DIVIDE_ASSIGN', r'/='),
@@ -108,7 +110,7 @@ token_types_list: Dict[str, TokenType] = {
     'FINALLY': TokenType('FINALLY', r'finally'),
     'THROW': TokenType('THROW', r'throw'),
     'ASSERT': TokenType('ASSERT', r'assert'),
-    'PRINT': TokenType('PRINT', r'print'),  # Added for basic_print.ne
+    'PRINT': TokenType('PRINT', r'print'), 
 
     # === Definition Keywords ===
     'FUNCTION': TokenType('FUNCTION', r'fun'),
@@ -151,7 +153,7 @@ token_types_list: Dict[str, TokenType] = {
     'ARRAY': TokenType('ARRAY', r'Array'),
 
     # === Memory Management ===
-    'DEREF': TokenType('DEREF', r'\*'),  # Pointer dereference and type
+    'DEREF': TokenType('DEREF', r'\*'),  
     'ALLOC': TokenType('ALLOC', r'alloc'),
     'FREE': TokenType('FREE', r'free'),
     'REFERENCE': TokenType('REFERENCE', r'&'),
