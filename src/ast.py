@@ -158,6 +158,7 @@ class VarDeclarationNode(StatementNode):
         self.type_token = type_token
         self.expr = expr
         self.modifiers = modifiers or []
+        self.annotations = annotations or []
 
     def __repr__(self):
         return f"VarDeclarationNode(name={self.variable}, type={self.type_token(True).value if self.type_token else None}, expr={self.expr}, modifiers={self.modifiers}, annotations={self.annotations}, line={self.line}, column={self.column})"
@@ -174,6 +175,7 @@ class ValDeclarationNode(StatementNode):
         self.type_token = type_token
         self.expr = expr
         self.modifiers = modifiers or []
+        self.annotations = annotations or []
 
     def __repr__(self):
         return f"ValDeclarationNode(name={self.variable}, type={self.type_token(True).value if self.type_token else None}, expr={self.expr}, modifiers={self.modifiers}, annotations={self.annotations}, line={self.line}, column={self.column})"
@@ -190,6 +192,7 @@ class ConstDeclarationNode(StatementNode):
         self.type_token = type_token
         self.expr = expr
         self.modifiers = modifiers or []
+        self.annotations = annotations or []
 
     def __repr__(self):
         return f"ConstDeclarationNode(name={self.variable}, type={self.type_token(True).value if self.type_token else None}, expr={self.expr}, modifiers={self.modifiers}, annotations={self.annotations}, line={self.line}, column={self.column})"
@@ -319,8 +322,9 @@ class TryNode(StatementNode):
 
 class CatchNode(Node):
     def __init__(self, exception_var: VariableNode, 
+                 body: 'BlockNode', 
                  type_token: Optional[Callable[[bool], Token]] = None, 
-                 body: 'BlockNode', line: int = 1, column: int = 1):
+                 line: int = 1, column: int = 1):
         super().__init__(line, column)
         self.exception_var = exception_var
         self.type_token = type_token
@@ -349,9 +353,8 @@ class FunctionCallNode(ExpressionNode):
         return f"FunctionCallNode(func={self.func}, args={self.args}, line={self.line}, column={self.column})"
 
 class FunctionDefNode(StatementNode):
-    def __init__(self, name: Token, params: List['ParamNode'], 
+    def __init__(self, name: Token, params: List['ParamNode'], body: 'BlockNode', 
                  return_type: Optional[Callable[[bool], Token]] = None, 
-                 body: 'BlockNode', 
                  modifiers: List[Token] = None, 
                  annotations: Optional[List['AnnotationNode']] = None, 
                  line: int = 1, column: int = 1):
@@ -675,17 +678,19 @@ class YieldNode(ExpressionNode):
     def __repr__(self):
         return f"YieldNode(expr={self.expression}, line={self.line}, column={self.column})"
 
-class AwaitNode(ExpressionNode):
-    def __init__(self, expression: ExpressionNode, line: int = 1, column: int = 1):
-        super().__init__(line, column)
+class AwaitNode(StatementNode):
+    def __init__(self, expression: ExpressionNode, 
+                 annotations: Optional[List['AnnotationNode']] = None, 
+                 line: int = 1, column: int = 1):
+        super().__init__(annotations, line, column)
         self.expression = expression
 
     def __repr__(self):
-        return f"AwaitNode(expr={self.expression}, line={self.line}, column={self.column})"
+        return f"AwaitNode(expr={self.expression}, annotations={self.annotations}, line={self.line}, column={self.column})"
 
 class AnnotationNode(StatementNode):
     def __init__(self, name: Token, args: List[str], 
-                 annotations: Optional[List['AnnotationNode']] = None, 
+                 annotations: List['AnnotationNode'] = None, 
                  line: int = 1, column: int = 1):
         super().__init__(annotations, line, column)
         self.name = name

@@ -1705,16 +1705,15 @@ class Interpreter:
         self.global_scope[companion_name] = instance
         logger.debug(f"Defined companion object: {companion_name}")
     
-    def interpret_interface_def(self, node: node: InterfaceNode) -> None:
+    def interpret_interface_def(self, node: InterfaceNode) -> None:
         """
         Define an interface, storing it for type checking and implementation.
         Contains method signatures.
         """
         self.interfaces[node.name.value] = node
-        logger.debug(f"Registered interface: {node.name}")
-        """
+        logger.debug(f"Registered interface: {node.name.value}")
     
-    def interpret_enum_def(self, node: node: EnumNode) -> None:
+    def interpret_enum_def(self, node: EnumNode) -> None:
         """
         Define an enum, storing its values.
         Supports pattern matching and type safety.
@@ -1723,9 +1722,9 @@ class Interpreter:
         for value in node.values:
             self.global_scope[f"{node.name.value}.{value.value}"] = EnumInstance(node.name.value, value.value)
             logger.debug(f"Defined enum: {node.name.value} with value {value.value}")
-        """
+        
 
-         def interpret_return(self, node: ReturnNode) -> Optional[Any]:
+    def interpret_return(self, node: ReturnNode) -> Optional[Any]:
         """
         Interpret return statement, unwrapping the expression value.
         Propagates return through the call stack.
