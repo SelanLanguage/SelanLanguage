@@ -2,23 +2,14 @@ from abc import ABC
 from typing import List, Optional, Callable
 from .token import Token
 
-class Node(ABC):
-    """Base class for all AST nodes."""
+class ExpressionNode(ABC):
     pass
 
-class ExpressionNode(Node):
-    """Base class for expression nodes (e.g., literals, operations)."""
-    pass
-
-class StatementNode(Node):
-    """Base class for statement nodes (e.g., declarations, control flow)."""
-    def __init__(self, annotations: List['AnnotationNode'] = None):
-        self.annotations = annotations or []
-
+# Literal Nodes
 class NumberNode(ExpressionNode):
     def __init__(self, token: Token):
         self.token = token
-        self.value = token.value
+        self.value = token.value  # Store the numeric value as a string
 
     def __repr__(self):
         return f"NumberNode(value={self.value})"
@@ -26,47 +17,23 @@ class NumberNode(ExpressionNode):
 class StringNode(ExpressionNode):
     def __init__(self, token: Token):
         self.token = token
-        self.value = token.value
+        self.value = token.value  # Store the string value with quotes
 
     def __repr__(self):
         return f"StringNode(value={self.value})"
 
-class RawStringNode(ExpressionNode):
-    def __init__(self, token: Token):
-        self.token = token
-        self.value = token.value
-
-    def __repr__(self):
-        return f"RawStringNode(value={self.value})"
-
 class CharNode(ExpressionNode):
     def __init__(self, token: Token):
         self.token = token
-        self.value = token.value
+        self.value = token.value  # Store the char value with single quotes
 
     def __repr__(self):
         return f"CharNode(value={self.value})"
 
-class ByteNode(ExpressionNode):
-    def __init__(self, token: Token):
-        self.token = token
-        self.value = token.value
-
-    def __repr__(self):
-        return f"ByteNode(value={self.value})"
-
-class HexNode(ExpressionNode):
-    def __init__(self, token: Token):
-        self.token = token
-        self.value = token.value
-
-    def __repr__(self):
-        return f"HexNode(value={self.value})"
-
 class BooleanNode(ExpressionNode):
     def __init__(self, token: Token):
         self.token = token
-        self.value = token.value
+        self.value = token.value  # Store the boolean value ("true" or "false")
 
     def __repr__(self):
         return f"BooleanNode(value={self.value})"
@@ -74,11 +41,12 @@ class BooleanNode(ExpressionNode):
 class NullNode(ExpressionNode):
     def __init__(self, token: Token):
         self.token = token
-        self.value = token.value
+        self.value = token.value  # Store the null value ("null")
 
     def __repr__(self):
         return f"NullNode(value={self.value})"
 
+# Operator Nodes
 class UnaryOperationNode(ExpressionNode):
     def __init__(self, operator: Token, operand: ExpressionNode, is_postfix: bool = False):
         self.operator = operator
@@ -86,7 +54,7 @@ class UnaryOperationNode(ExpressionNode):
         self.is_postfix = is_postfix
 
     def __repr__(self):
-        return f"UnaryOperationNode(operator={self.operator.value}, operand={self.operand}, is_postfix={self.is_postfix})"
+        return f"UnaryOperationNode(operator={self.operator}, operand={self.operand}, is_postfix={self.is_postfix})"
 
 class BinaryOperationNode(ExpressionNode):
     def __init__(self, operator: Token, left_node: ExpressionNode, right_node: ExpressionNode):
@@ -95,7 +63,7 @@ class BinaryOperationNode(ExpressionNode):
         self.right_node = right_node
 
     def __repr__(self):
-        return f"BinaryOperationNode(operator={self.operator.value}, left={self.left_node}, right={self.right_node})"
+        return f"BinaryOperationNode({self.operator}, {self.left_node}, {self.right_node})"
 
 class NullCoalesceNode(ExpressionNode):
     def __init__(self, left_node: ExpressionNode, right_node: ExpressionNode):
@@ -103,7 +71,7 @@ class NullCoalesceNode(ExpressionNode):
         self.right_node = right_node
 
     def __repr__(self):
-        return f"NullCoalesceNode(left={self.left_node}, right={self.right_node})"
+        return f"NullCoalesceNode({self.left_node}, {self.right_node})"
 
 class ElvisNode(ExpressionNode):
     def __init__(self, left_node: ExpressionNode, right_node: ExpressionNode):
@@ -111,31 +79,27 @@ class ElvisNode(ExpressionNode):
         self.right_node = right_node
 
     def __repr__(self):
-        return f"ElvisNode(left={self.left_node}, right={self.right_node})"
+        return f"ElvisNode({self.left_node}, {self.right_node})"
 
+# Variable and Assignment Nodes
 class VariableNode(ExpressionNode):
     def __init__(self, variable: Token):
         self.variable = variable
 
     def __repr__(self):
-        return f"VariableNode(name={self.variable.value})"
+        return f"VariableNode({self.variable})"
 
 class AssignNode(ExpressionNode):
-    def __init__(self, token: Token, target: ExpressionNode, expression: ExpressionNode):
+    def __init__(self, token: Token, variable: VariableNode, expression: ExpressionNode):
         self.token = token
-        self.target = target
+        self.variable = variable
         self.expression = expression
 
     def __repr__(self):
-        return f"AssignNode(operator={self.token.value}, target={self.target}, value={self.expression})"
+        return f"AssignNode({self.token}, {self.variable}, {self.expression})"
 
-class VarDeclarationNode(StatementNode):
-    def __init__(self, var_token: Token, variable: VariableNode, 
-                 type_token: Optional[Callable[[bool], Token]], 
-                 expr: Optional[ExpressionNode], 
-                 modifiers: List[Token] = None, 
-                 annotations: List['AnnotationNode'] = None):
-        super().__init__(annotations)
+class VarDeclarationNode(ExpressionNode):
+    def __init__(self, var_token: Token, variable: VariableNode, type_token: Optional[Callable[[bool], Token]], expr: Optional[ExpressionNode], modifiers: List[Token] = None):
         self.var_token = var_token
         self.variable = variable
         self.type_token = type_token
@@ -143,15 +107,10 @@ class VarDeclarationNode(StatementNode):
         self.modifiers = modifiers or []
 
     def __repr__(self):
-        return f"VarDeclarationNode(name={self.variable}, type={self.type_token(True) if self.type_token else None}, expr={self.expr}, modifiers={self.modifiers}, annotations={self.annotations})"
+        return f"VarDeclarationNode({self.var_token}, {self.variable}, {self.type_token}, {self.expr}, modifiers={self.modifiers})"
 
-class ValDeclarationNode(StatementNode):
-    def __init__(self, val_token: Token, variable: VariableNode, 
-                 type_token: Optional[Callable[[bool], Token]], 
-                 expr: Optional[ExpressionNode], 
-                 modifiers: List[Token] = None, 
-                 annotations: List['AnnotationNode'] = None):
-        super().__init__(annotations)
+class ValDeclarationNode(ExpressionNode):
+    def __init__(self, val_token: Token, variable: VariableNode, type_token: Optional[Callable[[bool], Token]], expr: Optional[ExpressionNode], modifiers: List[Token] = None):
         self.val_token = val_token
         self.variable = variable
         self.type_token = type_token
@@ -159,15 +118,10 @@ class ValDeclarationNode(StatementNode):
         self.modifiers = modifiers or []
 
     def __repr__(self):
-        return f"ValDeclarationNode(name={self.variable}, type={self.type_token(True) if self.type_token else None}, expr={self.expr}, modifiers={self.modifiers}, annotations={self.annotations})"
+        return f"ValDeclarationNode({self.val_token}, {self.variable}, {self.type_token}, {self.expr}, modifiers={self.modifiers})"
 
-class ConstDeclarationNode(StatementNode):
-    def __init__(self, const_token: Token, variable: VariableNode, 
-                 type_token: Optional[Callable[[bool], Token]], 
-                 expr: Optional[ExpressionNode], 
-                 modifiers: List[Token] = None, 
-                 annotations: List['AnnotationNode'] = None):
-        super().__init__(annotations)
+class ConstDeclarationNode(ExpressionNode):
+    def __init__(self, const_token: Token, variable: VariableNode, type_token: Optional[Callable[[bool], Token]], expr: Optional[ExpressionNode], modifiers: List[Token] = None):
         self.const_token = const_token
         self.variable = variable
         self.type_token = type_token
@@ -175,157 +129,112 @@ class ConstDeclarationNode(StatementNode):
         self.modifiers = modifiers or []
 
     def __repr__(self):
-        return f"ConstDeclarationNode(name={self.variable}, type={self.type_token(True) if self.type_token else None}, expr={self.expr}, modifiers={self.modifiers}, annotations={self.annotations})"
+        return f"ConstDeclarationNode({self.const_token}, {self.variable}, {self.type_token}, {self.expr}, modifiers={self.modifiers})"
 
-class IfNode(StatementNode):
-    def __init__(self, condition: ExpressionNode, then_branch: 'BlockNode', 
-                 else_branch: Optional['BlockNode'], 
-                 annotations: List['AnnotationNode'] = None):
-        super().__init__(annotations)
+# Control Flow Nodes
+class IfNode(ExpressionNode):
+    def __init__(self, condition: ExpressionNode, then_branch: 'BlockNode', else_branch: Optional['BlockNode']):
         self.condition = condition
         self.then_branch = then_branch
         self.else_branch = else_branch
 
     def __repr__(self):
-        return f"IfNode(condition={self.condition}, then={self.then_branch}, else={self.else_branch}, annotations={self.annotations})"
+        return f"IfNode({self.condition}, {self.then_branch}, {self.else_branch})"
 
-class WhenNode(StatementNode):
-    def __init__(self, expression: Optional[ExpressionNode], 
-                 cases: List['WhenCaseNode'], 
-                 else_branch: Optional['BlockNode'], 
-                 annotations: List['AnnotationNode'] = None):
-        super().__init__(annotations)
-        self.expression = expression
-        self.cases = cases
-        self.else_branch = else_branch
-
-    def __repr__(self):
-        return f"WhenNode(expr={self.expression}, cases={self.cases}, else={self.else_branch}, annotations={self.annotations})"
-
-class WhenCaseNode(Node):
-    def __init__(self, conditions: List[ExpressionNode], body: 'BlockNode'):
-        self.conditions = conditions
-        self.body = body
-
-    def __repr__(self):
-        return f"WhenCaseNode(conditions={self.conditions}, body={self.body})"
-
-class WhileNode(StatementNode):
-    def __init__(self, condition: ExpressionNode, body: 'BlockNode', 
-                 annotations: List['AnnotationNode'] = None):
-        super().__init__(annotations)
+class WhileNode(ExpressionNode):
+    def __init__(self, condition: ExpressionNode, body: 'BlockNode'):
         self.condition = condition
         self.body = body
 
     def __repr__(self):
-        return f"WhileNode(condition={self.condition}, body={self.body}, annotations={self.annotations})"
+        return f"WhileNode({self.condition}, {self.body})"
 
-class DoWhileNode(StatementNode):
-    def __init__(self, body: 'BlockNode', condition: ExpressionNode, 
-                 annotations: List['AnnotationNode'] = None):
-        super().__init__(annotations)
+class DoWhileNode(ExpressionNode):
+    def __init__(self, body: 'BlockNode', condition: ExpressionNode):
         self.body = body
         self.condition = condition
 
     def __repr__(self):
-        return f"DoWhileNode(body={self.body}, condition={self.condition}, annotations={self.annotations})"
+        return f"DoWhileNode({self.body}, {self.condition})"
 
-class ForNode(StatementNode):
-    def __init__(self, init: Optional[StatementNode], 
-                 cond: Optional[ExpressionNode], 
-                 step: Optional[ExpressionNode], 
-                 body: 'BlockNode', 
-                 annotations: List['AnnotationNode'] = None):
-        super().__init__(annotations)
+class ForNode(ExpressionNode):
+    def __init__(self, init: Optional[ExpressionNode], cond: Optional[ExpressionNode], step: Optional[ExpressionNode], body: 'BlockNode'):
         self.init = init
         self.cond = cond
         self.step = step
         self.body = body
 
     def __repr__(self):
-        return f"ForNode(init={self.init}, cond={self.cond}, step={self.step}, body={self.body}, annotations={self.annotations})"
+        return f"ForNode({self.init}, {self.cond}, {self.step}, {self.body})"
 
-class SwitchNode(StatementNode):
-    def __init__(self, expression: ExpressionNode, cases: List['CaseNode'], 
-                 default: Optional['BlockNode'], 
-                 annotations: List['AnnotationNode'] = None):
-        super().__init__(annotations)
+class SwitchNode(ExpressionNode):
+    def __init__(self, expression: ExpressionNode, cases: List['CaseNode'], default: Optional['BlockNode']):
         self.expression = expression
         self.cases = cases
         self.default = default
 
     def __repr__(self):
-        return f"SwitchNode(expr={self.expression}, cases={self.cases}, default={self.default}, annotations={self.annotations})"
+        return f"SwitchNode({self.expression}, {self.cases}, {self.default})"
 
-class CaseNode(Node):
-    def __init__(self, value: ExpressionNode, body: 'BlockNode'):
+class CaseNode(ExpressionNode):
+    def __init__(self, value: ExpressionNode, body: ExpressionNode):
         self.value = value
         self.body = body
 
     def __repr__(self):
-        return f"CaseNode(value={self.value}, body={self.body})"
+        return f"CaseNode({self.value}, {self.body})"
 
-class BreakNode(StatementNode):
-    def __init__(self, annotations: List['AnnotationNode'] = None):
-        super().__init__(annotations)
-
-    def __repr__(self):
-        return f"BreakNode(annotations={self.annotations})"
-
-class ContinueNode(StatementNode):
-    def __init__(self, annotations: List['AnnotationNode'] = None):
-        super().__init__(annotations)
+class BreakNode(ExpressionNode):
+    def __init__(self):
+        pass
 
     def __repr__(self):
-        return f"ContinueNode(annotations={self.annotations})"
+        return "BreakNode()"
 
-class TryNode(StatementNode):
-    def __init__(self, try_block: 'BlockNode', catches: List['CatchNode'], 
-                 finally_block: Optional['BlockNode'], 
-                 annotations: List['AnnotationNode'] = None):
-        super().__init__(annotations)
+class ContinueNode(ExpressionNode):
+    def __init__(self):
+        pass
+
+    def __repr__(self):
+        return "ContinueNode()"
+
+# Exception Handling Nodes
+class TryNode(ExpressionNode):
+    def __init__(self, try_block: 'BlockNode', catches: List['CatchNode'], finally_block: Optional['BlockNode']):
         self.try_block = try_block
         self.catches = catches
         self.finally_block = finally_block
 
     def __repr__(self):
-        return f"TryNode(try={self.try_block}, catches={self.catches}, finally={self.finally_block}, annotations={self.annotations})"
+        return f"TryNode({self.try_block}, {self.catches}, {self.finally_block})"
 
-class CatchNode(Node):
-    def __init__(self, exception_var: VariableNode, 
-                 type_token: Optional[Callable[[bool], Token]], 
-                 body: 'BlockNode'):
+class CatchNode(ExpressionNode):
+    def __init__(self, exception_var: VariableNode, type_token: Optional[Callable[[bool], Token]], body: 'BlockNode'):
         self.exception_var = exception_var
         self.type_token = type_token
         self.body = body
 
     def __repr__(self):
-        return f"CatchNode(var={self.exception_var}, type={self.type_token(True) if self.type_token else None}, body={self.body})"
+        return f"CatchNode({self.exception_var}, {self.type_token}, {self.body})"
 
-class ThrowNode(StatementNode):
-    def __init__(self, expression: ExpressionNode, 
-                 annotations: List['AnnotationNode'] = None):
-        super().__init__(annotations)
+class ThrowNode(ExpressionNode):
+    def __init__(self, expression: ExpressionNode):
         self.expression = expression
 
     def __repr__(self):
-        return f"ThrowNode(expr={self.expression}, annotations={self.annotations})"
+        return f"ThrowNode({self.expression})"
 
+# Function and Lambda Nodes
 class FunctionCallNode(ExpressionNode):
     def __init__(self, func: VariableNode, args: List[ExpressionNode]):
         self.func = func
         self.args = args
 
     def __repr__(self):
-        return f"FunctionCallNode(func={self.func}, args={self.args})"
+        return f"FunctionCallNode({self.func}, {self.args})"
 
-class FunctionDefNode(StatementNode):
-    def __init__(self, name: Token, params: List['ParamNode'], 
-                 return_type: Optional[Callable[[bool], Token]], 
-                 body: 'BlockNode', 
-                 modifiers: List[Token] = None, 
-                 annotations: List['AnnotationNode'] = None):
-        super().__init__(annotations)
+class FunctionDefNode(ExpressionNode):
+    def __init__(self, name: Token, params: List['ParamNode'], return_type: Optional[Callable[[bool], Token]], body: 'BlockNode', modifiers: List[Token] = None):
         self.name = name
         self.params = params
         self.return_type = return_type
@@ -333,58 +242,28 @@ class FunctionDefNode(StatementNode):
         self.modifiers = modifiers or []
 
     def __repr__(self):
-        return (f"FunctionDefNode(name={self.name.value}, params={self.params}, "
-                f"return_type={self.return_type(True) if self.return_type else None}, "
-                f"body={self.body}, modifiers={self.modifiers}, annotations={self.annotations})")
+        return f"FunctionDefNode({self.name}, {self.params}, {self.return_type}, {self.body}, modifiers={self.modifiers})"
 
-class ParamNode(Node):
-    def __init__(self, name: Token, type_token: Optional[Callable[[bool], Token]], 
-                 is_nullable: Optional[bool] = False):
+class ParamNode(ExpressionNode):
+    def __init__(self, name: Token, type_token: Optional[Callable[[bool], Token]], is_nullable: bool = False):
         self.name = name
         self.type_token = type_token
         self.is_nullable = is_nullable
 
     def __repr__(self):
-        return f"ParamNode(name={self.name.value}, type={self.type_token(True) if self.type_token else None}, nullable={self.is_nullable})"
+        return f"ParamNode({self.name}, {self.type_token}, nullable={self.is_nullable})"
 
 class LambdaNode(ExpressionNode):
-    def __init__(self, params: List[ParamNode], body: ExpressionNode):
+    def __init__(self, params: List['ParamNode'], body: ExpressionNode):
         self.params = params
         self.body = body
 
     def __repr__(self):
-        return f"LambdaNode(params={self.params}, body={self.body})"
+        return f"LambdaNode({self.params}, {self.body})"
 
-class StructNode(StatementNode):
-    def __init__(self, name: Token, members: List[StatementNode], 
-                 modifiers: List[Token] = None, 
-                 annotations: List['AnnotationNode'] = None):
-        super().__init__(annotations)
-        self.name = name
-        self.members = members
-        self.modifiers = modifiers or []
-
-    def __repr__(self):
-        return f"StructNode(name={self.name.value}, members={self.members}, modifiers={self.modifiers}, annotations={self.annotations})"
-
-class DataClassNode(StatementNode):
-    def __init__(self, name: Token, members: List[StatementNode], 
-                 modifiers: List[Token] = None, 
-                 annotations: List['AnnotationNode'] = None):
-        super().__init__(annotations)
-        self.name = name
-        self.members = members
-        self.modifiers = modifiers or []
-
-    def __repr__(self):
-        return f"DataClassNode(name={self.name.value}, members={self.members}, modifiers={self.modifiers}, annotations={self.annotations})"
-
-class SealedClassNode(StatementNode):
-    def __init__(self, name: Token, superclass: Optional[VariableNode], 
-                 interfaces: List[VariableNode], members: List[StatementNode], 
-                 modifiers: List[Token] = None, 
-                 annotations: List['AnnotationNode'] = None):
-        super().__init__(annotations)
+# Class and Interface Nodes
+class ClassNode(ExpressionNode):
+    def __init__(self, name: Token, superclass: Optional[VariableNode], interfaces: List[VariableNode], members: List[ExpressionNode], modifiers: List[Token] = None):
         self.name = name
         self.superclass = superclass
         self.interfaces = interfaces
@@ -392,101 +271,49 @@ class SealedClassNode(StatementNode):
         self.modifiers = modifiers or []
 
     def __repr__(self):
-        return f"SealedClassNode(name={self.name.value}, superclass={self.superclass}, interfaces={self.interfaces}, members={self.members}, modifiers={self.modifiers}, annotations={self.annotations})"
+        return f"ClassNode({self.name}, {self.superclass}, {self.interfaces}, {self.members}, modifiers={self.modifiers})"
 
-class ObjectNode(StatementNode):
-    def __init__(self, name: Token, members: List[StatementNode], 
-                 modifiers: List[Token] = None, 
-                 annotations: List['AnnotationNode'] = None):
-        super().__init__(annotations)
+class InterfaceNode(ExpressionNode):
+    def __init__(self, name: Token, members: List[ExpressionNode], modifiers: List[Token] = None):
         self.name = name
         self.members = members
         self.modifiers = modifiers or []
 
     def __repr__(self):
-        return f"ObjectNode(name={self.name.value}, members={self.members}, modifiers={self.modifiers}, annotations={self.annotations})"
+        return f"InterfaceNode({self.name}, {self.members}, modifiers={self.modifiers})"
 
-class CompanionObjectNode(StatementNode):
-    def __init__(self, members: List[StatementNode], 
-                 annotations: List['AnnotationNode'] = None):
-        super().__init__(annotations)
-        self.members = members
-
-    def __repr__(self):
-        return f"CompanionObjectNode(members={self.members}, annotations={self.annotations})"
-
-class ClassNode(StatementNode):
-    def __init__(self, name: Token, superclass: Optional[VariableNode], 
-                 interfaces: List[VariableNode], members: List[StatementNode], 
-                 modifiers: List[Token] = None, 
-                 annotations: List['AnnotationNode'] = None):
-        super().__init__(annotations)
-        self.name = name
-        self.superclass = superclass
-        self.interfaces = interfaces
-        self.members = members
-        self.modifiers = modifiers or []
-
-    def __repr__(self):
-        return f"ClassNode(name={self.name.value}, superclass={self.superclass}, interfaces={self.interfaces}, members={self.members}, modifiers={self.modifiers}, annotations={self.annotations})"
-
-class InterfaceNode(StatementNode):
-    def __init__(self, name: Token, members: List[StatementNode], 
-                 modifiers: List[Token] = None, 
-                 annotations: List['AnnotationNode'] = None):
-        super().__init__(annotations)
-        self.name = name
-        self.members = members
-        self.modifiers = modifiers or []
-
-    def __repr__(self):
-        return f"InterfaceNode(name={self.name.value}, members={self.members}, modifiers={self.modifiers}, annotations={self.annotations})"
-
-class EnumNode(StatementNode):
-    def __init__(self, name: Token, values: List[Token], 
-                 members: List[StatementNode], 
-                 annotations: List['AnnotationNode'] = None):
-        super().__init__(annotations)
+class EnumNode(ExpressionNode):
+    def __init__(self, name: Token, values: List[Token], members: List[ExpressionNode]):
         self.name = name
         self.values = values
         self.members = members
 
     def __repr__(self):
-        return f"EnumNode(name={self.name.value}, values={self.values}, members={self.members}, annotations={self.annotations})"
+        return f"EnumNode({self.name}, {self.values}, {self.members})"
 
-class ReturnNode(StatementNode):
-    def __init__(self, expression: Optional[ExpressionNode], 
-                 annotations: List['AnnotationNode'] = None):
-        super().__init__(annotations)
+# Other Nodes
+class ReturnNode(ExpressionNode):
+    def __init__(self, expression: Optional[ExpressionNode]):
         self.expression = expression
 
     def __repr__(self):
-        return f"ReturnNode(expr={self.expression}, annotations={self.annotations})"
+        return f"ReturnNode({self.expression})"
 
-class PrintNode(StatementNode):
-    def __init__(self, expression: ExpressionNode, 
-                 annotations: List['AnnotationNode'] = None):
-        super().__init__(annotations)
+class PrintNode(ExpressionNode):
+    def __init__(self, expression: ExpressionNode):
         self.expression = expression
 
     def __repr__(self):
-        return f"PrintNode(expr={self.expression}, annotations={self.annotations})"
+        return f"PrintNode({self.expression})"
 
-class InputNode(StatementNode):
-    def __init__(self, prompt: Optional[ExpressionNode], 
-                 annotations: List['AnnotationNode'] = None):
-        super().__init__(annotations)
+class InputNode(ExpressionNode):
+    """AST node for input function call, mimicking Python's input([prompt])."""
+    def __init__(self, token: Token, prompt: Optional[ExpressionNode] = None):
+        self.token = token
         self.prompt = prompt
 
     def __repr__(self):
-        return f"InputNode(prompt={self.prompt}, annotations={self.annotations})"
-
-class ReadLineNode(StatementNode):
-    def __init__(self, annotations: List['AnnotationNode'] = None):
-        super().__init__(annotations)
-
-    def __repr__(self):
-        return f"ReadLineNode(annotations={self.annotations})"
+        return f"InputNode(token={self.token}, prompt={self.prompt})"
 
 class InstanceOfNode(ExpressionNode):
     def __init__(self, expression: ExpressionNode, type_token: Token):
@@ -494,7 +321,7 @@ class InstanceOfNode(ExpressionNode):
         self.type_token = type_token
 
     def __repr__(self):
-        return f"InstanceOfNode(expr={self.expression}, type={self.type_token.value})"
+        return f"InstanceOfNode({self.expression}, {self.type_token})"
 
 class NewNode(ExpressionNode):
     def __init__(self, type_token: Token, args: List[ExpressionNode]):
@@ -502,42 +329,13 @@ class NewNode(ExpressionNode):
         self.args = args
 
     def __repr__(self):
-        return f"NewNode(type={self.type_token.value}, args={self.args})"
+        return f"NewNode({self.type_token}, {self.args})"
 
-class AllocNode(ExpressionNode):
-    def __init__(self, type_token: Callable[[bool], Token]):
-        self.type_token = type_token
-
-    def __repr__(self):
-        return f"AllocNode(type={self.type_token(True).value})"
-
-class FreeNode(StatementNode):
-    def __init__(self, expression: ExpressionNode, 
-                 annotations: List['AnnotationNode'] = None):
-        super().__init__(annotations)
-        self.expression = expression
-
-    def __repr__(self):
-        return f"FreeNode(expr={self.expression}, annotations={self.annotations})"
-
-class DerefNode(ExpressionNode):
-    def __init__(self, expression: ExpressionNode):
-        self.expression = expression
-
-    def __repr__(self):
-        return f"DerefNode(expr={self.expression})"
-
-class ReferenceNode(ExpressionNode):
-    def __init__(self, expression: ExpressionNode):
-        self.expression = expression
-
-    def __repr__(self):
-        return f"ReferenceNode(expr={self.expression})"
-
+# Instance Reference Nodes
 class ThisNode(ExpressionNode):
     def __init__(self, token: Token):
         self.token = token
-        self.value = token.value
+        self.value = token.value  # Store the 'this' keyword value
 
     def __repr__(self):
         return f"ThisNode(value={self.value})"
@@ -545,14 +343,13 @@ class ThisNode(ExpressionNode):
 class SuperNode(ExpressionNode):
     def __init__(self, token: Token):
         self.token = token
-        self.value = token.value
+        self.value = token.value  # Store the 'super' keyword value
 
     def __repr__(self):
         return f"SuperNode(value={self.value})"
 
 class MemberCallNode(ExpressionNode):
-    def __init__(self, obj: ExpressionNode, method: VariableNode, 
-                 args: List[ExpressionNode]):
+    def __init__(self, obj: ExpressionNode, method: VariableNode, args: List[ExpressionNode]):
         self.obj = obj
         self.method = method
         self.args = args
@@ -560,90 +357,38 @@ class MemberCallNode(ExpressionNode):
     def __repr__(self):
         return f"MemberCallNode(obj={self.obj}, method={self.method}, args={self.args})"
 
-class ImportNode(StatementNode):
-    def __init__(self, module: List[Token], names: List[Token] = None, 
-                 alias: Optional[Token] = None, 
-                 annotations: List['AnnotationNode'] = None):
-        super().__init__(annotations)
-        self.module = module
-        self.names = names or []
-        self.alias = alias
+# Import Node (Python-style)
+class ImportNode(ExpressionNode):
+    def __init__(self, module: List[Token], names: List[Token] = None, alias: Optional[Token] = None):
+        self.module = module  # e.g., ['os', 'path'] for 'from os.path'
+        self.names = names or []  # e.g., ['sin', 'cos'] for 'from math import sin, cos'
+        self.alias = alias  # e.g., 'np' for 'import numpy as np'
 
     def __repr__(self):
-        return f"ImportNode(module={self.module}, names={self.names}, alias={self.alias}, annotations={self.annotations})"
+        return f"ImportNode(module={self.module}, names={self.names}, alias={self.alias})"
 
-class PackageNode(StatementNode):
-    def __init__(self, package: List[Token], 
-                 annotations: List['AnnotationNode'] = None):
-        super().__init__(annotations)
-        self.package = package
-
-    def __repr__(self):
-        return f"PackageNode(package={self.package}, annotations={self.annotations})"
-
-class NamespaceNode(StatementNode):
-    def __init__(self, namespace: List[Token], 
-                 annotations: List['AnnotationNode'] = None):
-        super().__init__(annotations)
-        self.namespace = namespace
-
-    def __repr__(self):
-        return f"NamespaceNode(namespace={self.namespace}, annotations={self.annotations})"
-
-class ExportNode(StatementNode):
-    def __init__(self, names: List[Token], 
-                 annotations: List['AnnotationNode'] = None):
-        super().__init__(annotations)
-        self.names = names
-
-    def __repr__(self):
-        return f"ExportNode(names={self.names}, annotations={self.annotations})"
-
-class YieldNode(ExpressionNode):
-    def __init__(self, expression: Optional[ExpressionNode]):
-        self.expression = expression
-
-    def __repr__(self):
-        return f"YieldNode(expr={self.expression})"
-
-class AwaitNode(ExpressionNode):
-    def __init__(self, expression: ExpressionNode):
-        self.expression = expression
-
-    def __repr__(self):
-        return f"AwaitNode(expr={self.expression})"
-
-class AnnotationNode(StatementNode):
-    def __init__(self, name: Token, args: List[ExpressionNode], 
-                 annotations: List['AnnotationNode'] = None):
-        super().__init__(annotations)
-        self.name = name
-        self.args = args
-
-    def __repr__(self):
-        return f"AnnotationNode(name={self.name.value}, args={self.args}, annotations={self.annotations})"
-
-class BlockNode(StatementNode):
-    def __init__(self, statements: List[StatementNode], 
-                 annotations: List['AnnotationNode'] = None):
-        super().__init__(annotations)
+# Block and Program Nodes
+class BlockNode(ExpressionNode):
+    def __init__(self, statements: List[ExpressionNode]):
         self.statements = statements
 
     def __repr__(self):
-        return f"BlockNode(statements={self.statements}, annotations={self.annotations})"
+        return f"BlockNode({self.statements})"
 
-class ProgramNode(StatementNode):
-    def __init__(self, imports: List[ImportNode], statements: List[StatementNode], 
-                 package: Optional[PackageNode] = None, 
-                 namespace: Optional[NamespaceNode] = None, 
-                 exports: List[ExportNode] = None, 
-                 annotations: List['AnnotationNode'] = None):
-        super().__init__(annotations)
+class StatementsNode(ExpressionNode):
+    def __init__(self):
+        self.code_strings: List[ExpressionNode] = []
+
+    def add_node(self, node: ExpressionNode):
+        self.code_strings.append(node)
+
+    def __repr__(self):
+        return f"StatementsNode({self.code_strings})"
+
+class ProgramNode(ExpressionNode):
+    def __init__(self, imports: List['ImportNode'], statements: List[ExpressionNode]):
         self.imports = imports
         self.statements = statements
-        self.package = package
-        self.namespace = namespace
-        self.exports = exports or []
 
     def __repr__(self):
-        return f"ProgramNode(imports={self.imports}, statements={self.statements}, package={self.package}, namespace={self.namespace}, exports={self.exports}, annotations={self.annotations})"
+        return f"ProgramNode({self.imports}, {self.statements})"

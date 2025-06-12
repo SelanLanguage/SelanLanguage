@@ -1,88 +1,38 @@
-import asyncio
 from abc import ABC
-from typing import Any, List, Optional, Callable, Dict, Union, Coroutine
+from typing import List, Optional, Callable, Any
 from .token import Token, TokenType, token_types
 from .ast import *
 from .error import format_error
-import sys
-import random
-
-class MemoryRef:
-    """Represents a memory reference for pointers."""
-    def __init__(self, value: Any, type_token: Callable[[bool], Token]):
-        self.value = value
-        self.type_token = type_token
-        self.is_valid = True
-
-class ClassInstance:
-    """Represents an instance of a class, struct, or object."""
-    def __init__(self, class_name: str, fields: Dict[str, Any], methods: Dict[str, FunctionDefNode]):
-        self.class_name = class_name
-        self.fields = fields
-        self.methods = methods
-
-class EnumInstance:
-    """Represents an enum value."""
-    def __init__(self, enum_name: str, value: str):
-        self.enum_name = enum_name
-        self.value = value
-
-class LambdaFunc:
-    """Represents a lambda function with captured scope."""
-    def __init__(self, node: LambdaNode, scope: Dict[str, Any]):
-        self.node = node
-        self.captured_scope = scope.copy()
-
-class Generator:
-    """Represents a generator for yield expressions."""
-    def __init__(self, iterator):
-        self.iterator = iterator
 
 class Interpreter:
-    """Interprets XenonLang AST with full support for all constructs."""
+    """Interprets an AST for a strongly-typed language with Python-like imports."""
     def __init__(self, source: str, filename: str):
         self.source = source
         self.filename = filename
-        # Scope management
-        self.global_scope: Dict[str, Any] = {}
-        self.scopes: List[Dict[str, Any]] = [self.global_scope]
-        self.const_vars: set = set()  # Track immutable variables
-        # Definitions
-        self.functions: Dict[str, FunctionDefNode] = {}
-        self.classes: Dict[str, Union[ClassNode, StructNode, DataClassNode, SealedClassNode, ObjectNode]] = {}
-        self.interfaces: Dict[str, InterfaceNode] = {}
-        self.enums: Dict[str, EnumNode] = {}
-        # Module system
-        self.package: Optional[str] = None
-        self.namespace: Optional[str] = None
-        self.exports: List[str] = []
-        self.imports: Dict[str, str] = {}
-        # Runtime state
-        self.current_class: Optional[str] = None
-        self.super_class_stack: List[str] = []
-        self.memory: Dict[int, MemoryRef] = {}  # Simulated heap
-        self.next_mem_addr = 0
-        # Coroutine state
-        self.async_context: bool = False
+        self.variables = {}
+        self.functions = {}
+        self.classes = {}
+        self.interfaces = {}
+        self.enums = {}
+        self.call_stack = [self.variables]
+        self.imports = {}
+        self.current_class = None
+        self.super_class_stack = []
 
     def push_scope(self):
-        """Push a new scope onto the stack."""
-        self.scopes.append({})
+        self.call_stack.append({})
+        self.variables = self.call_stack[-1]
 
     def pop_scope(self):
-        """Pop the current scope from the stack."""
-        if len(self.scopes) > 1:
-            self.scopes.pop()
-        else:
-            raise RuntimeError("Cannot pop global scope")
+        self.call_stack.pop()
+        self.variables = self.call_stack[-1] if self.call_stack else {}
 
     def get_variable(self, name: str, line: int, column: int) -> Any:
-        """Retrieve a variable from the current or outer scopes."""
-        for scope in reversed(self.scopes):
+        for scope in reversed(self.call_stack):
             if name in scope:
                 return scope[name]
         raise RuntimeError(format_error(
-            "NameError",
+            "RuntimeError",
             f"Undefined variable: {name}",
             self.filename,
             self.source,
@@ -90,424 +40,160 @@ class Interpreter:
             column
         ))
 
-    def set_variable(self, name: str, value: Any, line: int, column: int, is_const: bool = False) -> Any:
-        """Set a variable in the appropriate scope."""
-        if is_const and name in self.const_vars:
-            raise RuntimeError(format_error(
-                "TypeError",
-                f"Cannot reassign const variable: {name}",
-                self.filename,
-                self.source,
-                line,
-                column
-            ))
-        for scope in reversed(self.scopes):
+    def set_variable(self, name: str, value: Any, line: int, column: int) -> Any:
+        for scope in reversed(self.call_stack):
             if name in scope:
-                if name in self.const_vars:
-                    raise RuntimeError(format_error(
-                        "TypeError",
-                        f"Cannot reassign const variable: {name}",
-                        self.filename,
-                        self.source,
-                        line,
-                        column
-                    ))
                 scope[name] = value
                 return value
-        self.scopes[-1][name] = value
-        if is_const:
-            self.const_vars.add(name)
+        self.variables[name] = value
         return value
 
-    def check_type(self, value: Any, type_token: Token, line: int, column: int, is_nullable: bool = False):
-        """Verify that a value matches the expected type."""
-        if value is None:
-            if is_nullable or type_token.value == 'Nothing':
-                return
-            raise TypeError(format_error(
-                "TypeError",
-                f"Expected {type_token.value}, got None",
-                self.filename,
-                self.source,
-                line,
-                column
-            ))
-        expected_type = type_token.value
-        if expected_type == 'Int':
-            if not isinstance(value, int):
-                raise TypeError(format_error(
-                    "TypeError",
-                    f"Expected Int, got {type(value).__name__}",
-                    self.filename,
-                    self.source,
-                    line,
-                    column
-                ))
-        elif expected_type in ('Float', 'Double'):
-            if not isinstance(value, (int, float)):
-                raise TypeError(format_error(
-                    "TypeError",
-                    f"Expected {expected_type}, got {type(value).__name__}",
-                    self.filename,
-                    self.source,
-                    line,
-                    column
-                ))
-        elif expected_type == 'String':
-            if not isinstance(value, str):
-                raise TypeError(format_error(
-                    "TypeError",
-                    f"Expected String, got {type(value).__name__}",
-                    self.filename,
-                    self.source,
-                    line,
-                    column
-                ))
-        elif expected_type == 'Char':
-            if not (isinstance(value, str) and len(value) == 1):
-                raise TypeError(format_error(
-                    "TypeError",
-                    f"Expected Char, got {type(value).__name__}",
-                    self.filename,
-                    self.source,
-                    line,
-                    column
-                ))
-        elif expected_type == 'Byte':
-            if not (isinstance(value, int) and 0 <= value <= 255):
-                raise TypeError(format_error(
-                    "TypeError",
-                    f"Expected Byte, got {type(value).__name__}",
-                    self.filename,
-                    self.source,
-                    line,
-                    column
-                ))
-        elif expected_type == 'Boolean':
-            if not isinstance(value, bool):
-                raise TypeError(format_error(
-                    "TypeError",
-                    f"Expected Boolean, got {type(value).__name__}",
-                    self.filename,
-                    self.source,
-                    line,
-                    column
-                ))
-        elif expected_type == 'Unit':
-            if value is not None:
-                raise TypeError(format_error(
-                    "TypeError",
-                    f"Expected Unit, got {type(value).__name__}",
-                    self.filename,
-                    self.source,
-                    line,
-                    column
-                ))
-        elif expected_type == 'Nothing':
-            raise TypeError(format_error(
-                "TypeError",
-                f"Expected Nothing, got {type(value).__name__}",
-                self.filename,
-                self.source,
-                line,
-                column
-            ))
-        elif expected_type == 'Any':
-            return
-        elif expected_type.startswith('List<'):
-            if not isinstance(value, list):
-                raise TypeError(format_error(
-                    "TypeError",
-                    f"Expected List, got {type(value).__name__}",
-                    self.filename,
-                    self.source,
-                    line,
-                    column
-                ))
-        elif expected_type.startswith('Map<'):
-            if not isinstance(value, dict):
-                raise TypeError(format_error(
-                    "TypeError",
-                    f"Expected Map, got {type(value).__name__}",
-                    self.filename,
-                    self.source,
-                    line,
-                    column
-                ))
-        elif expected_type.startswith('Set<'):
-            if not isinstance(value, set):
-                raise TypeError(format_error(
-                    "TypeError",
-                    f"Expected Set, got {type(value).__name__}",
-                    self.filename,
-                    self.source,
-                    line,
-                    column
-                ))
-        elif expected_type.startswith('Array<'):
-            if not isinstance(value, list):
-                raise TypeError(format_error(
-                    "TypeError",
-                    f"Expected Array, got {type(value).__name__}",
-                    self.filename,
-                    self.source,
-                    line,
-                    column
-                ))
-        elif expected_type.endswith('*'):  # Pointer type
-            base_type = expected_type[:-1]
-            if not isinstance(value, int) or value not in self.memory:
-                raise TypeError(format_error(
-                    "TypeError",
-                    f"Expected pointer to {base_type}, got invalid pointer",
-                    self.filename,
-                    self.source,
-                    line,
-                    column
-                ))
-            mem_ref = self.memory[value]
-            if not mem_ref.is_valid:
-                raise RuntimeError(format_error("RuntimeError", f"Dereferencing invalid pointer", self.filename, self.source, line, column))
-            # Recursively check the base type if needed
-            if base_type and mem_ref.value is not None:
-                self.check_type(mem_ref.value, Token(value=base_type, type=TokenType.VARIABLE, line=line, column=column), line, column, mem_ref.type_token.is_nullable)
-        elif expected_type in self.classes or expected_type in self.enums:
-            if isinstance(value, ClassInstance) and value.class_name == expected_type:
-                return
-            if isinstance(value, EnumInstance) and value.enum_name == expected_type:
-                return
-            raise TypeError(format_error(
-                "TypeError",
-                f"Expected {expected_type}, got {type(value).__name__}",
-                self.filename,
-                self.source,
-                line,
-                column
-            ))
-        else:
-            raise RuntimeError(format_error(
-                "RuntimeError",
-                f"Unknown type: {expected_type}",
-                self.filename,
-                self.source,
-                line,
-                column
-            ))
-
-    def check_modifiers(self, modifiers: List[Token], line: int, column: int):
-        """Validate access modifiers."""
-        for mod in modifiers:
-            if mod.value in ('private', 'protected') and not self.current_class:
-                raise RuntimeError(format_error(
-                    "SyntaxError",
-                    f"Modifier '{mod.value}' is only allowed inside classes",
-                    self.filename,
-                    self.source,
-                    line,
-                    column
-                ))
-            if mod.value == 'protected':
-                if not any(self.current_class in super_class for super_class in self.super_class_stack):
-                    raise RuntimeError(format_error(
-                        "TypeError",
-                        "Protected access is only allowed within the class or its subclasses",
-                        self.filename,
-                        self.source,
-                        line,
-                        column
-                    ))
-            if mod.value in ('abstract', 'sealed', 'data', 'object') and not isinstance(self.classes.get(self.current_class), (ClassNode, SealedClassNode, DataClassNode, ObjectNode)):
-                raise RuntimeError(format_error(
-                    "SyntaxError",
-                    f"Modifier '{mod.value}' is only allowed for classes",
-                    self.filename,
-                    self.source,
-                    line,
-                    column
-                ))
-
-    def interpret(self, node: Union[ExpressionNode, StatementNode]) -> Optional[Any]:
-        """Main dispatch method for interpreting AST nodes."""
-        try:
-            if isinstance(node, ProgramNode):
-                return self.interpret_program(node)
-            elif isinstance(node, PackageNode):
-                return self.interpret_package(node)
-            elif isinstance(node, NamespaceNode):
-                return self.interpret_namespace(node)
-            elif isinstance(node, ExportNode):
-                return self.interpret_export(node)
-            elif isinstance(node, ImportNode):
-                return self.interpret_import(node)
-            elif isinstance(node, NumberNode):
-                return self.interpret_number(node)
-            elif isinstance(node, StringNode):
-                return node.value[1:-1]
-            elif isinstance(node, RawStringNode):
-                return node.value[3:-3]  # Remove triple quotes
-            elif isinstance(node, CharNode):
-                return node.value[1]
-            elif isinstance(node, ByteNode):
-                return int(node.value[2:], 16)  # e.g., 0xFF
-            elif isinstance(node, HexNode):
-                return int(node.value[2:], 16)
-            elif isinstance(node, BooleanNode):
-                return node.value == 'true'
-            elif isinstance(node, NullNode):
+    def interpret(self, node: ExpressionNode) -> Any:
+        if isinstance(node, ProgramNode):
+            try:
+                for imp in node.imports:
+                    self.interpret(imp)
+                for stmt in node.statements:
+                    result = self.interpret(stmt)
+                    if isinstance(result, ReturnNode):
+                        return self.interpret_return(result)
                 return None
-            elif isinstance(node, VariableNode):
-                return self.interpret_variable(node)
-            elif isinstance(node, AssignNode):
-                return self.interpret_assign(node)
-            elif isinstance(node, VarDeclarationNode):
-                return self.interpret_var_declaration(node)
-            elif isinstance(node, ValDeclarationNode):
-                return self.interpret_val_declaration(node)
-            elif isinstance(node, ConstDeclarationNode):
-                return self.interpret_const_declaration(node)
-            elif isinstance(node, BinaryOperationNode):
-                return self.interpret_binary_op(node)
-            elif isinstance(node, UnaryOperationNode):
-                return self.interpret_unary_op(node)
-            elif isinstance(node, NullCoalesceNode):
-                return self.interpret_null_coalesce(node)
-            elif isinstance(node, ElvisNode):
-                return self.interpret_elvis(node)
-            elif isinstance(node, IfNode):
-                return self.interpret_if(node)
-            elif isinstance(node, WhenNode):
-                return self.interpret_when(node)
-            elif isinstance(node, WhileNode):
-                return self.interpret_while(node)
-            elif isinstance(node, DoWhileNode):
-                return self.interpret_do_while(node)
-            elif isinstance(node, ForNode):
-                return self.interpret_for(node)
-            elif isinstance(node, SwitchNode):
-                return self.interpret_switch(node)
-            elif isinstance(node, BreakNode):
-                return node
-            elif isinstance(node, ContinueNode):
-                return node
-            elif isinstance(node, TryNode):
-                return self.interpret_try(node)
-            elif isinstance(node, ThrowNode):
-                return self.interpret_throw(node)
-            elif isinstance(node, FunctionDefNode):
-                return self.interpret_function_def(node)
-            elif isinstance(node, FunctionCallNode):
-                return self.interpret_function_call(node)
-            elif isinstance(node, MemberCallNode):
-                return self.interpret_member_call(node)
-            elif isinstance(node, LambdaNode):
-                return self.interpret_lambda(node)
-            elif isinstance(node, ClassNode):
-                return self.interpret_class_def(node)
-            elif isinstance(node, StructNode):
-                return self.interpret_struct_def(node)
-            elif isinstance(node, DataClassNode):
-                return self.interpret_data_class_def(node)
-            elif isinstance(node, SealedClassNode):
-                return self.interpret_sealed_class_def(node)
-            elif isinstance(node, ObjectNode):
-                return self.interpret_object_def(node)
-            elif isinstance(node, CompanionObjectNode):
-                return self.interpret_companion_object(node)
-            elif isinstance(node, InterfaceNode):
-                return self.interpret_interface_def(node)
-            elif isinstance(node, EnumNode):
-                return self.interpret_enum_def(node)
-            elif isinstance(node, ReturnNode):
-                return self.interpret_return(node)
-            elif isinstance(node, PrintNode):
-                return self.interpret_print(node)
-            elif isinstance(node, InputNode):
-                return self.interpret_input(node)
-            elif isinstance(node, ReadLineNode):
-                return self.interpret_read_line(node)
-            elif isinstance(node, InstanceOfNode):
-                return self.interpret_instanceof(node)
-            elif isinstance(node, NewNode):
-                return self.interpret_new(node)
-            elif isinstance(node, AllocNode):
-                return self.interpret_alloc(node)
-            elif isinstance(node, FreeNode):
-                return self.interpret_free(node)
-            elif isinstance(node, DerefNode):
-                return self.interpret_deref(node)
-            elif isinstance(node, ReferenceNode):
-                return self.interpret_reference(node)
-            elif isinstance(node, ThisNode):
-                return self.interpret_this(node)
-            elif isinstance(node, SuperNode):
-                return self.interpret_super(node)
-            elif isinstance(node, YieldNode):
-                return self.interpret_yield(node)
-            elif isinstance(node, AwaitNode):
-                return self.interpret_await(node)
-            elif isinstance(node, AnnotationNode):
-                return node  # Annotations are stored as metadata
-            elif isinstance(node, BlockNode):
-                return self.interpret_block(node)
-            else:
-                raise RuntimeError(format_error(
+            except RuntimeError as e:
+                print(f"Error: {str(e)}")
+                return None
+        elif isinstance(node, ImportNode):
+            return self.interpret_import(node)
+        elif isinstance(node, NumberNode):
+            return float(node.value) if '.' in node.value or 'e' in node.value.lower() else int(node.value)
+        elif isinstance(node, StringNode):
+            return node.value[1:-1]  # Remove quotes
+        elif isinstance(node, CharNode):
+            return node.value[1:-1]
+        elif isinstance(node, BooleanNode):
+            return node.value == 'true'
+        elif isinstance(node, NullNode):
+            return None
+        elif isinstance(node, VariableNode):
+            return self.get_variable(node.variable.value, node.variable.line, node.variable.column)
+        elif isinstance(node, AssignNode):
+            return self.interpret_assign(node)
+        elif isinstance(node, VarDeclarationNode):
+            return self.interpret_var_declaration(node)
+        elif isinstance(node, ValDeclarationNode):
+            return self.interpret_val_declaration(node)
+        elif isinstance(node, ConstDeclarationNode):
+            return self.interpret_const_declaration(node)
+        elif isinstance(node, BinaryOperationNode):
+            return self.interpret_binary_op(node)
+        elif isinstance(node, UnaryOperationNode):
+            return self.interpret_unary_op(node)
+        elif isinstance(node, NullCoalesceNode):
+            return self.interpret_null_coalesce(node)
+        elif isinstance(node, ElvisNode):
+            return self.interpret_elvis(node)
+        elif isinstance(node, IfNode):
+            return self.interpret_if(node)
+        elif isinstance(node, WhileNode):
+            return self.interpret_while(node)
+        elif isinstance(node, DoWhileNode):
+            return self.interpret_do_while(node)
+        elif isinstance(node, ForNode):
+            return self.interpret_for(node)
+        elif isinstance(node, SwitchNode):
+            return self.interpret_switch(node)
+        elif isinstance(node, TryNode):
+            return self.interpret_try(node)
+        elif isinstance(node, ThrowNode):
+            return self.interpret_throw(node)
+        elif isinstance(node, FunctionDefNode):
+            return self.interpret_function_def(node)
+        elif isinstance(node, FunctionCallNode):
+            return self.interpret_function_call(node)
+        elif isinstance(node, MemberCallNode):
+            return self.interpret_member_call(node)
+        elif isinstance(node, LambdaNode):
+            return self.interpret_lambda(node)
+        elif isinstance(node, ClassNode):
+            return self.interpret_class_def(node)
+        elif isinstance(node, InterfaceNode):
+            return self.interpret_interface_def(node)
+        elif isinstance(node, EnumNode):
+            return self.interpret_enum_def(node)
+        elif isinstance(node, ReturnNode):
+            return self.interpret_return(node)
+        elif isinstance(node, PrintNode):
+            return self.interpret_print(node)
+        elif isinstance(node, InputNode):
+            return self.interpret_input(node)
+        elif isinstance(node, InstanceOfNode):
+            return self.interpret_instanceof(node)
+        elif isinstance(node, NewNode):
+            return self.interpret_new(node)
+        elif isinstance(node, BlockNode):
+            return self.interpret_block(node)
+        elif isinstance(node, BreakNode):
+            return node
+        elif isinstance(node, ContinueNode):
+            return node
+        elif isinstance(node, ThisNode):
+            return self.interpret_this(node)
+        elif isinstance(node, SuperNode):
+            return self.interpret_super(node)
+        raise RuntimeError(format_error(
+            "RuntimeError",
+            f"Unknown node type: {type(node).__name__}",
+            self.filename,
+            self.source,
+            getattr(node, 'token', node).line if hasattr(node, 'token') else 1,
+            getattr(node, 'token', node).column if hasattr(node, 'token') else 1
+        ))
+
+    def interpret_input(self, node: InputNode) -> str:
+        """Interprets an InputNode, mimicking Python's input([prompt])."""
+        if node.prompt:
+            prompt = self.interpret(node.prompt)
+            if not isinstance(prompt, str):
+                raise TypeError(format_error(
                     "TypeError",
-                    f"Unknown node type: {type(node).__name__}",
+                    f"Prompt must be a string, got {type(prompt).__name__}",
                     self.filename,
                     self.source,
-                    getattr(node, 'line', 1),
-                    getattr(node, 'column', 1)
+                    getattr(node.prompt, 'line', node.token.line),
+                    getattr(node.prompt, 'column', node.token.column)
                 ))
-        except Exception as e:
+            print(prompt, end='', flush=True)
+        try:
+            user_input = input()
+            if user_input.strip() == "":
+                raise RuntimeError(format_error(
+                    "RuntimeError",
+                    "Empty input is not allowed",
+                    self.filename,
+                    self.source,
+                    node.token.line,
+                    node.token.column
+                ))
+            return user_input
+        except KeyboardInterrupt:
             raise RuntimeError(format_error(
                 "RuntimeError",
-                str(e),
+                "Program interrupted by user during input",
                 self.filename,
                 self.source,
-                getattr(node, 'line', 1),
-                getattr(node, 'column', 1)
+                node.token.line,
+                node.token.column
             ))
-
-    def interpret_program(self, node: ProgramNode) -> Optional[Any]:
-        """Interpret a program with package, imports."""
-        if node.package:
-            self.interpret_package(node.package)
-        if node.namespace:
-            self.interpret_namespace(node.namespace)
-            for imp in node.imports:
-                self.interpret_import(imp)
-            for stmt in node.statements:
-                result = self.interpret(stmt)
-                if isinstance(result, ReturnNode):
-                    return self.interpret_return(result)
-            for exp in node.exports or []:
-                self.interpret_export(exp)
-        return None
-
-    def interpret_package(self, node: PackageNode) -> None:
-        """Set the package name."""
-        self.package = '.'.join(t.value for t in node.package)
-
-    def interpret_namespace(self, node: NamespaceNode) -> None:
-        """Set the namespace."""
-        self.namespace = '.'.join(t.value for t in node.namespace)
-
-    def interpret_export(self, node: ExportNode) -> None:
-        """Export specified names."""
-        for name in node.names:
-            if name.value not in self.global_scope:
-                raise RuntimeError(format_error(
-                    "NameError",
-                    f"Cannot export undefined name: {name.value}",
-                    self.filename,
-                    self.source,
-                    name.line,
-                    name.column
-                ))
-            self.exports.append(name.value)
+        except EOFError:
+            raise RuntimeError(format_error(
+                "RuntimeError",
+                "Input terminated by EOF",
+                self.filename,
+                self.source,
+                node.token.line,
+                node.token.column
+            ))
 
     def interpret_import(self, node: ImportNode) -> None:
-        """Handle import statements."""
         module_name = '.'.join(t.value for t in node.module)
         if node.names:
             for name in node.names:
@@ -516,156 +202,176 @@ class Interpreter:
             self.imports[node.alias.value] = module_name
         else:
             self.imports[module_name] = module_name
+        return None
 
-    def interpret_number(self, node: NumberNode) -> Union[int, float]:
-        """Convert number node to int or float."""
-        value = node.value
-        if '.' in value or 'e' in value.lower():
-            return float(value)
-        return int(value)
-
-    def interpret_variable(self, node: VariableNode) -> Any:
-        """Retrieve variable value."""
-        return self.get_variable(node.variable.value, node.variable.line, node.variable.column)
-
-    def interpret_assign(self, node: AssignNode) -> Optional[Any]:
-        """Handle assignments, including pointer dereferences."""
+    def interpret_assign(self, node: AssignNode) -> Any:
         value = self.interpret(node.expression)
-        if isinstance(node.target, VariableNode):
-            if node.token.type != TokenType.ASSIGN:
-                old_value = self.get_variable(node.target.variable.value, node.target.variable.line, node.target.variable.column)
-                value = self.perform_operation(old_value, value, node.token.type, node.token.line, node.token.column)
-            return self.set_variable(
-                node.target.variable.value,
-                value,
-                node.target.variable.line,
-                node.target.variable.column
-            )
-        elif isinstance(node.target, DerefNode):
-            addr = self.interpret(node.target)
-            if not isinstance(addr, int) or addr not in self.memory:
-                raise RuntimeError(format_error(
-                    "RuntimeError",
-                    f"Invalid pointer address: {addr}",
-                    self.filename,
-                    self.source,
-                    node.target.line,
-                    node.target.column
-                ))
-            mem_ref = self.memory[addr]
-            if not mem_ref.is_valid:
-                raise RuntimeError(format_error(
-                    "RuntimeError",
-                    f"Dereferencing invalid pointer",
-                    self.filename,
-                    self.source,
-                    node.target.line,
-                    node.target.column
-                ))
-            if node.token.type != TokenType.ASSIGN:
-                old_value = mem_ref.value
-                value = self.perform_operation(old_value, value, node.token.type, node.token.line, node.token.column)
-            mem_ref.value = value
-            return value
-        else:
-            raise RuntimeError(format_error(
-                "TypeError",
-                f"Invalid assignment target",
-                self.filename,
-                self.source,
-                node.target.line,
-                node.target.column
-            ))
+        if isinstance(node.variable, VariableNode):
+            return self.set_variable(node.variable.variable.value, value, node.variable.variable.line, node.variable.variable.column)
+        raise RuntimeError(format_error(
+            "RuntimeError",
+            "Invalid assignment target",
+            self.filename,
+            self.source,
+            node.token.line,
+            node.token.column
+        ))
 
     def interpret_var_declaration(self, node: VarDeclarationNode) -> Any:
-        """Declare a mutable variable."""
         value = self.interpret(node.expr) if node.expr else None
         if node.type_token:
-            self.check_type(value, node.type_token(True), node.var_token.line, node.var_token.column, is_nullable=True)
-        self.check_modifiers(node.modifiers, node.var_token.line, node.var_token.column)
-        return self.set_variable(node.variable.variable.value, value, node.var_token.line, node.var_token.column)
+            self.check_type(value, node.type_token(False))
+        self.check_modifiers(node.modifiers, node.variable.variable.line, node.variable.variable.column)
+        self.variables[node.variable.variable.value] = value
+        return value
 
     def interpret_val_declaration(self, node: ValDeclarationNode) -> Any:
-        """Declare an immutable variable."""
         value = self.interpret(node.expr) if node.expr else None
         if node.type_token:
-            self.check_type(value, node.type_token(True), node.val_token.line, node.val_token.column, is_nullable=True)
-        self.check_modifiers(node.modifiers, node.val_token.line, node.val_token.column)
-        return self.set_variable(node.variable.variable.value, value, node.val_token.line, node.val_token.column, is_const=True)
+            self.check_type(value, node.type_token(False))
+        self.check_modifiers(node.modifiers, node.variable.variable.line, node.variable.variable.column)
+        self.variables[node.variable.variable.value] = value
+        return value
 
     def interpret_const_declaration(self, node: ConstDeclarationNode) -> Any:
-        """Declare a constant."""
-        if not node.expr:
-            raise RuntimeError(format_error(
-                "SyntaxError",
-                f"Const declaration requires an initializer",
-                self.filename,
-                self.source,
-                node.const_token.line,
-                node.const_token.column
-            ))
         value = self.interpret(node.expr)
         if node.type_token:
-            self.check_type(value, node.type_token(True), node.const_token.line, node.const_token.column, is_nullable=True)
-        self.check_modifiers(node.modifiers, node.const_token.line, node.const_token.column)
-        return self.set_variable(node.variable.variable.value, value, node.const_token.line, node.const_token.column, is_const=True)
+            self.check_type(value, node.type_token(False))
+        self.check_modifiers(node.modifiers, node.variable.variable.line, node.variable.variable.column)
+        self.variables[node.variable.variable.value] = value
+        return value
 
-    def perform_operation(self, left: Any, right: Any, op: TokenType, line: int, column: int) -> Any:
-        """Perform binary operation for compound assignments."""
-        try:
-            if op == TokenType.PLUS_ASSIGN:
-                return left + right
-            elif op == TokenType.MINUS_ASSIGN:
-                return left - right
-            elif op == TokenType.MULTIPLY_ASSIGN:
-                return left * right
-            elif op == TokenType.DIVIDE_ASSIGN:
-                if right == 0:
+    def check_modifiers(self, modifiers: List[Token], line: int, column: int) -> None:
+        if not self.current_class:
+            for mod in modifiers:
+                if mod.value in ('private', 'protected'):
                     raise RuntimeError(format_error(
                         "RuntimeError",
-                        "Division by zero",
+                        f"Modifier '{mod.value}' is only allowed inside classes",
                         self.filename,
                         self.source,
                         line,
                         column
                     ))
-                return left / right
-            elif op == TokenType.MODULO_ASSIGN:
-                return left % right
-            else:
-                raise RuntimeError(format_error(
-                    "RuntimeError",
-                    f"Unknown operator: {op}",
+        else:
+            for mod in modifiers:
+                if mod.value == 'protected' and not any(self.current_class in super_class for super_class in self.super_class_stack):
+                    raise RuntimeError(format_error(
+                        "RuntimeError",
+                        "Protected access is only allowed within the class or its subclasses",
+                        self.filename,
+                        self.source,
+                        line,
+                        column
+                    ))
+
+    def check_type(self, value: Any, type_token: Token) -> None:
+        expected_type = type_token.value
+        if expected_type == 'str':
+            expected_type = 'string'
+        if value is None and expected_type != 'void':
+            if not getattr(type_token, 'is_nullable', False):
+                raise TypeError(format_error(
+                    "TypeError",
+                    f"Expected {expected_type}, got None",
                     self.filename,
                     self.source,
-                    line,
-                    column
+                    type_token.line,
+                    type_token.column
                 ))
-        except TypeError:
-            raise RuntimeError(format_error(
+            return
+        if expected_type == 'float' or expected_type == 'double':
+            if isinstance(value, (int, float)):
+                return
+            raise TypeError(format_error(
                 "TypeError",
-                f"Invalid types for operation {op}",
+                f"Expected {expected_type}, got {type(value).__name__}",
                 self.filename,
                 self.source,
-                line,
-                column
+                type_token.line,
+                type_token.column
+            ))
+        elif expected_type == 'int':
+            if isinstance(value, int):
+                return
+            raise TypeError(format_error(
+                "TypeError",
+                f"Expected int, got {type(value).__name__}",
+                self.filename,
+                self.source,
+                type_token.line,
+                type_token.column
+            ))
+        elif expected_type == 'string':
+            if isinstance(value, str):
+                return
+            raise TypeError(format_error(
+                "TypeError",
+                f"Expected string, got {type(value).__name__}",
+                self.filename,
+                self.source,
+                type_token.line,
+                type_token.column
+            ))
+        elif expected_type == 'boolean':
+            if isinstance(value, bool):
+                return
+            raise TypeError(format_error(
+                "TypeError",
+                f"Expected boolean, got {type(value).__name__}",
+                self.filename,
+                self.source,
+                type_token.line,
+                type_token.column
+            ))
+        elif expected_type == 'void':
+            if value is None:
+                return
+            raise TypeError(format_error(
+                "TypeError",
+                f"Expected void, got {type(value).__name__}",
+                self.filename,
+                self.source,
+                type_token.line,
+                type_token.column
+            ))
+        elif expected_type == 'any':
+            return
+        elif type_token.type.name == 'VARIABLE':
+            if isinstance(value, dict) and value.get('__class__') == expected_type:
+                return
+            raise TypeError(format_error(
+                "TypeError",
+                f"Expected class {expected_type}, got {type(value).__name__}",
+                self.filename,
+                self.source,
+                type_token.line,
+                type_token.column
+            ))
+        else:
+            raise RuntimeError(format_error(
+                "RuntimeError",
+                f"Unknown type: {expected_type}",
+                self.filename,
+                self.source,
+                type_token.line,
+                type_token.column
             ))
 
     def interpret_binary_op(self, node: BinaryOperationNode) -> Any:
-        """Interpret binary operations."""
         left = self.interpret(node.left_node)
         right = self.interpret(node.right_node)
-        op = node.operator.type
+        op = node.operator.type.name
         try:
-            if op == TokenType.PLUS:
+            if op == 'PLUS':
                 if isinstance(left, str) or isinstance(right, str):
                     return str(left) + str(right)
                 return left + right
-            elif op == TokenType.MINUS:
+            elif op == 'MINUS':
                 return left - right
-            elif op == TokenType.MULTIPLY:
+            elif op == 'MULTIPLY':
                 return left * right
-            elif op == TokenType.DIVIDE:
+            elif op == 'DIVIDE':
                 if right == 0:
                     raise RuntimeError(format_error(
                         "RuntimeError",
@@ -676,25 +382,25 @@ class Interpreter:
                         node.operator.column
                     ))
                 return left / right
-            elif op == TokenType.MODULO:
+            elif op == 'MODULO':
                 return left % right
-            elif op == TokenType.EQUAL:
+            elif op == 'EQUAL':
                 return left == right
-            elif op == TokenType.NOT_EQUAL:
+            elif op == 'NOT_EQUAL':
                 return left != right
-            elif op == TokenType.LESS:
+            elif op == 'LESS':
                 return left < right
-            elif op == TokenType.GREATER:
+            elif op == 'GREATER':
                 return left > right
-            elif op == TokenType.LESS_EQUAL:
+            elif op == 'LESS_EQUAL':
                 return left <= right
-            elif op == TokenType.GREATER_EQUAL:
+            elif op == 'GREATER_EQUAL':
                 return left >= right
-            elif op == TokenType.AND:
+            elif op == 'AND':
                 return bool(left) and bool(right)
-            elif op == TokenType.OR:
+            elif op == 'OR':
                 return bool(left) or bool(right)
-            elif op == TokenType.BIT_AND:
+            elif op == 'BIT_AND':
                 if isinstance(left, int) and isinstance(right, int):
                     return left & right
                 raise TypeError(format_error(
@@ -705,7 +411,7 @@ class Interpreter:
                     node.operator.line,
                     node.operator.column
                 ))
-            elif op == TokenType.BIT_OR:
+            elif op == 'BIT_OR':
                 if isinstance(left, int) and isinstance(right, int):
                     return left | right
                 raise TypeError(format_error(
@@ -716,7 +422,7 @@ class Interpreter:
                     node.operator.line,
                     node.operator.column
                 ))
-            elif op == TokenType.BIT_XOR:
+            elif op == 'BIT_XOR':
                 if isinstance(left, int) and isinstance(right, int):
                     return left ^ right
                 raise TypeError(format_error(
@@ -727,7 +433,7 @@ class Interpreter:
                     node.operator.line,
                     node.operator.column
                 ))
-            elif op == TokenType.SHL:
+            elif op == 'SHL':
                 if isinstance(left, int) and isinstance(right, int):
                     return left << right
                 raise TypeError(format_error(
@@ -738,7 +444,7 @@ class Interpreter:
                     node.operator.line,
                     node.operator.column
                 ))
-            elif op == TokenType.SHR:
+            elif op == 'SHR':
                 if isinstance(left, int) and isinstance(right, int):
                     return left >> right
                 raise TypeError(format_error(
@@ -749,18 +455,17 @@ class Interpreter:
                     node.operator.line,
                     node.operator.column
                 ))
-            else:
-                raise RuntimeError(format_error(
-                    "RuntimeError",
-                    f"Unknown operator: {op}",
-                    self.filename,
-                    self.source,
-                    node.operator.line,
-                    node.operator.column
-                ))
+            raise RuntimeError(format_error(
+                "RuntimeError",
+                f"Unknown operator: {op}",
+                self.filename,
+                self.source,
+                node.operator.line,
+                node.operator.column
+            ))
         except TypeError as e:
             raise RuntimeError(format_error(
-                "TypeError",
+                "RuntimeError",
                 f"Type error in operation {op}: {str(e)}",
                 self.filename,
                 self.source,
@@ -769,13 +474,12 @@ class Interpreter:
             ))
 
     def interpret_unary_op(self, node: UnaryOperationNode) -> Any:
-        """Interpret unary operations."""
         operand = self.interpret(node.operand)
-        op = node.operator.type
+        op = node.operator.type.name
         if node.is_postfix:
             if not isinstance(node.operand, VariableNode):
                 raise RuntimeError(format_error(
-                    "SyntaxError",
+                    "RuntimeError",
                     "Postfix operator requires a variable",
                     self.filename,
                     self.source,
@@ -793,18 +497,18 @@ class Interpreter:
                     node.operator.line,
                     node.operator.column
                 ))
-            if op == TokenType.INCREMENT:
+            if op == 'INCREMENT':
                 self.set_variable(var_name, old_value + 1, node.operand.variable.line, node.operand.variable.column)
                 return old_value
-            elif op == TokenType.DECREMENT:
+            elif op == 'DECREMENT':
                 self.set_variable(var_name, old_value - 1, node.operand.variable.line, node.operand.variable.column)
                 return old_value
         try:
-            if op == TokenType.MINUS:
+            if op == 'MINUS':
                 return -operand
-            elif op == TokenType.NOT:
+            elif op == 'NOT':
                 return not operand
-            elif op == TokenType.BIT_NOT:
+            elif op == 'BIT_NOT':
                 if isinstance(operand, int):
                     return ~operand
                 raise TypeError(format_error(
@@ -815,7 +519,7 @@ class Interpreter:
                     node.operator.line,
                     node.operator.column
                 ))
-            elif op == TokenType.INCREMENT:
+            elif op == 'INCREMENT':
                 if not isinstance(operand, (int, float)):
                     raise TypeError(format_error(
                         "TypeError",
@@ -826,7 +530,7 @@ class Interpreter:
                         node.operator.column
                     ))
                 return operand + 1
-            elif op == TokenType.DECREMENT:
+            elif op == 'DECREMENT':
                 if not isinstance(operand, (int, float)):
                     raise TypeError(format_error(
                         "TypeError",
@@ -837,18 +541,17 @@ class Interpreter:
                         node.operator.column
                     ))
                 return operand - 1
-            else:
-                raise RuntimeError(format_error(
-                    "RuntimeError",
-                    f"Unknown unary operator: {op}",
-                    self.filename,
-                    self.source,
-                    node.operator.line,
-                    node.operator.column
-                ))
+            raise RuntimeError(format_error(
+                "RuntimeError",
+                f"Unknown unary operator: {op}",
+                self.filename,
+                self.source,
+                node.operator.line,
+                node.operator.column
+            ))
         except TypeError as e:
             raise RuntimeError(format_error(
-                "TypeError",
+                "RuntimeError",
                 f"Type error in unary operation {op}: {str(e)}",
                 self.filename,
                 self.source,
@@ -857,26 +560,23 @@ class Interpreter:
             ))
 
     def interpret_null_coalesce(self, node: NullCoalesceNode) -> Any:
-        """Interpret null-coalescing operator (??)."""
         left = self.interpret(node.left_node)
         return left if left is not None else self.interpret(node.right_node)
 
     def interpret_elvis(self, node: ElvisNode) -> Any:
-        """Interpret Elvis operator (?:)."""
         left = self.interpret(node.left_node)
         return left if left is not None else self.interpret(node.right_node)
 
     def interpret_if(self, node: IfNode) -> Any:
-        """Interpret if statement."""
         condition = self.interpret(node.condition)
         if not isinstance(condition, bool):
-            raise TypeError(format_error(
-                "TypeError",
+            raise RuntimeError(format_error(
+                "RuntimeError",
                 f"Condition must be boolean, got {type(condition).__name__}",
                 self.filename,
                 self.source,
-                getattr(node.condition, 'line', 1),
-                getattr(node.condition, 'column', 1)
+                getattr(node.condition, 'line', node.condition.token.line if hasattr(node.condition, 'token') else 1),
+                getattr(node.condition, 'column', node.condition.token.column if hasattr(node.condition, 'token') else 1)
             ))
         if condition:
             return self.interpret(node.then_branch)
@@ -884,30 +584,17 @@ class Interpreter:
             return self.interpret(node.else_branch)
         return None
 
-    def interpret_when(self, node: WhenNode) -> Any:
-        """Interpret when statement."""
-        expr_value = self.interpret(node.expression) if node.expression else None
-        for case in node.cases:
-            for cond in case.conditions:
-                cond_value = self.interpret(cond)
-                if expr_value is None or cond_value == expr_value:
-                    return self.interpret(case.body)
-        if node.else_branch:
-            return self.interpret(node.else_branch)
-        return None
-
     def interpret_while(self, node: WhileNode) -> Any:
-        """Interpret while loop."""
         while True:
             condition = self.interpret(node.condition)
             if not isinstance(condition, bool):
-                raise TypeError(format_error(
-                    "TypeError",
+                raise RuntimeError(format_error(
+                    "RuntimeError",
                     f"Condition must be boolean, got {type(condition).__name__}",
                     self.filename,
                     self.source,
-                    getattr(node.condition, 'line', 1),
-                    getattr(node.condition, 'column', 1)
+                    getattr(node.condition, 'line', node.condition.token.line if hasattr(node.condition, 'token') else 1),
+                    getattr(node.condition, 'column', node.condition.token.column if hasattr(node.condition, 'token') else 1)
                 ))
             if not condition:
                 break
@@ -921,7 +608,6 @@ class Interpreter:
         return None
 
     def interpret_do_while(self, node: DoWhileNode) -> Any:
-        """Interpret do-while loop."""
         while True:
             result = self.interpret(node.body)
             if isinstance(result, BreakNode):
@@ -932,24 +618,23 @@ class Interpreter:
                 continue
             condition = self.interpret(node.condition)
             if not isinstance(condition, bool):
-                raise TypeError(format_error(
-                    "TypeError",
+                raise RuntimeError(format_error(
+                    "RuntimeError",
                     f"Condition must be boolean, got {type(condition).__name__}",
                     self.filename,
                     self.source,
-                    getattr(node.condition, 'line', 1),
-                    getattr(node.condition, 'column', 1)
+                    getattr(node.condition, 'line', node.condition.token.line if hasattr(node.condition, 'token') else 1),
+                    getattr(node.condition, 'column', node.condition.token.column if hasattr(node.condition, 'token') else 1)
                 ))
             if not condition:
                 break
         return None
 
     def interpret_for(self, node: ForNode) -> Any:
-        """Interpret for loop."""
+        if node.init:
+            self.interpret(node.init)
         self.push_scope()
         try:
-            if node.init:
-                self.interpret(node.init)
             while node.cond is None or self.interpret(node.cond):
                 result = self.interpret(node.body)
                 if isinstance(result, BreakNode):
@@ -967,7 +652,6 @@ class Interpreter:
             self.pop_scope()
 
     def interpret_switch(self, node: SwitchNode) -> Any:
-        """Interpret switch statement."""
         value = self.interpret(node.expression)
         for case in node.cases:
             case_value = self.interpret(case.value)
@@ -978,16 +662,15 @@ class Interpreter:
         return None
 
     def interpret_try(self, node: TryNode) -> Any:
-        """Interpret try-catch-finally."""
         try:
             return self.interpret(node.try_block)
         except RuntimeError as e:
             for catch in node.catches:
                 self.push_scope()
                 try:
-                    self.set_variable(catch.exception_var.variable.value, str(e), catch.exception_var.variable.line, catch.exception_var.variable.column)
+                    self.variables[catch.exception_var.variable.value] = str(e)
                     if catch.type_token:
-                        self.check_type(str(e), catch.type_token(True), catch.exception_var.variable.line, catch.exception_var.variable.column)
+                        self.check_type(str(e), catch.type_token(False))
                     return self.interpret(catch.body)
                 finally:
                     self.pop_scope()
@@ -997,31 +680,26 @@ class Interpreter:
                 self.interpret(node.finally_block)
 
     def interpret_throw(self, node: ThrowNode) -> None:
-        """Interpret throw statement."""
         value = self.interpret(node.expression)
         raise RuntimeError(format_error(
             "RuntimeError",
             str(value),
             self.filename,
             self.source,
-            getattr(node.expression, 'line', 1),
-            getattr(node.expression, 'column', 1)
+            getattr(node.expression, 'line', node.expression.token.line if hasattr(node.expression, 'token') else 1),
+            getattr(node.expression, 'column', node.expression.token.column if hasattr(node.expression, 'token') else 1)
         ))
 
     def interpret_function_def(self, node: FunctionDefNode) -> None:
-        """Define a function."""
         self.check_modifiers(node.modifiers, node.name.line, node.name.column)
-        if 'async' in [m.value for m in node.modifiers]:
-            node.is_async = True
         self.functions[node.name.value] = node
         return None
 
     def interpret_function_call(self, node: FunctionCallNode) -> Any:
-        """Call a function."""
         func_name = node.func.variable.value
         if func_name not in self.functions:
             raise RuntimeError(format_error(
-                "NameError",
+                "RuntimeError",
                 f"Undefined function: {func_name}",
                 self.filename,
                 self.source,
@@ -1044,29 +722,27 @@ class Interpreter:
         try:
             for param, arg in zip(func.params, args):
                 if param.type_token:
-                    self.check_type(arg, param.type_token(True), param.name.line, param.name.column, param.is_nullable)
+                    self.check_type(arg, param.type_token(False))
                 if arg is None and not param.is_nullable:
-                    raise TypeError(format_error(
-                        "TypeError",
+                    raise RuntimeError(format_error(
+                        "RuntimeError",
                         f"Parameter {param.name.value} is not nullable",
                         self.filename,
                         self.source,
                         param.name.line,
                         param.name.column
                     ))
-                self.set_variable(param.name.value, arg, param.name.line, param.name.column)
+                self.variables[param.name.value] = arg
             result = self.interpret(func.body)
             if isinstance(result, ReturnNode):
                 return_value = self.interpret_return(result)
                 if func.return_type:
-                    self.check_type(return_value, func.return_type(True), node.func.variable.line, node.func.variable.column)
-                if getattr(func, 'is_async', False):
-                    return asyncio.ensure_future(self.async_wrapper(return_value))
+                    self.check_type(return_value, func.return_type(False))
                 return return_value
-            if func.return_type and func.return_type(True).value != 'Unit':
+            if func.return_type and func.return_type(False).value != 'void':
                 raise RuntimeError(format_error(
-                    "TypeError",
-                    f"Function {func_name} must return a value of type {func.return_type(True).value}",
+                    "RuntimeError",
+                    f"Function {func_name} must return a value of type {func.return_type(False).value}",
                     self.filename,
                     self.source,
                     node.func.variable.line,
@@ -1076,35 +752,43 @@ class Interpreter:
         finally:
             self.pop_scope()
 
-    async def async_wrapper(self, value: Any) -> Any:
-        """Wrap synchronous results for async functions."""
-        if isinstance(value, Coroutine):
-            return await value
-        return value
-
     def interpret_member_call(self, node: MemberCallNode) -> Any:
-        """Call a method on an object."""
         obj = self.interpret(node.obj)
-        if not isinstance(obj, ClassInstance):
-            raise TypeError(format_error(
-                "TypeError",
-                f"Member call requires an object, got {type(obj).__name__}",
-                self.filename,
-                self.source,
-                node.method.variable.line,
-                node.method.variable.column
-            ))
-        method_name = node.method.variable.value
-        if method_name not in obj.methods:
+        if not isinstance(obj, dict) or '__class__' not in obj:
             raise RuntimeError(format_error(
-                "NameError",
-                f"Undefined method {method_name} in class {obj.class_name}",
+                "RuntimeError",
+                "Member call requires an object",
                 self.filename,
                 self.source,
                 node.method.variable.line,
                 node.method.variable.column
             ))
-        method = obj.methods[method_name]
+        class_name = obj['__class__']
+        if class_name not in self.classes:
+            raise RuntimeError(format_error(
+                "RuntimeError",
+                f"Undefined class: {class_name}",
+                self.filename,
+                self.source,
+                node.method.variable.line,
+                node.method.variable.column
+            ))
+        class_def = self.classes[class_name]
+        method_name = node.method.variable.value
+        method = None
+        for member in class_def.members:
+            if isinstance(member, FunctionDefNode) and member.name.value == method_name:
+                method = member
+                break
+        if not method:
+            raise RuntimeError(format_error(
+                "RuntimeError",
+                f"Undefined method {method_name} in class {class_name}",
+                self.filename,
+                self.source,
+                node.method.variable.line,
+                node.method.variable.column
+            ))
         self.check_modifiers(method.modifiers, node.method.variable.line, node.method.variable.column)
         args = [self.interpret(arg) for arg in node.args]
         if len(args) != len(method.params):
@@ -1120,34 +804,60 @@ class Interpreter:
         try:
             for param, arg in zip(method.params, args):
                 if param.type_token:
-                    self.check_type(arg, param.type_token(True), param.name.line, param.name.column, param.is_nullable)
+                    self.check_type(arg, param.type_token(False))
                 if arg is None and not param.is_nullable:
-                    raise TypeError(format_error(
-                        "TypeError",
+                    raise RuntimeError(format_error(
+                        "RuntimeError",
                         f"Parameter {param.name.value} is not nullable",
                         self.filename,
                         self.source,
                         param.name.line,
                         param.name.column
                     ))
-                self.set_variable(param.name.value, arg, param.name.line, param.name.column)
-            self.set_variable('this', obj, node.method.variable.line, node.method.variable.column)
+                self.variables[param.name.value] = arg
+            self.variables['this'] = obj
             result = self.interpret(method.body)
             if isinstance(result, ReturnNode):
                 return_value = self.interpret_return(result)
                 if method.return_type:
-                    self.check_type(return_value, method.return_type(True), node.method.variable.line, node.method.variable.column)
+                    self.check_type(return_value, method.return_type(False))
                 return return_value
             return None
         finally:
             self.pop_scope()
 
-    def interpret_lambda(self, node: LambdaNode) -> LambdaFunc:
-        """Create a lambda function."""
-        return LambdaFunc(node, self.scopes[-1])
+    def interpret_lambda(self, node: LambdaNode) -> Any:
+        def lambda_func(*args):
+            if len(args) != len(node.params):
+                raise TypeError(format_error(
+                    "TypeError",
+                    f"Expected {len(node.params)} arguments, got {len(args)}",
+                    self.filename,
+                    self.source,
+                    node.params[0].line if node.params else 1,
+                    node.params[0].column if node.params else 1
+                ))
+            self.push_scope()
+            try:
+                for param, arg in zip(node.params, args):
+                    if param.type_token:
+                        self.check_type(arg, param.type_token(False))
+                    if arg is None and not param.is_nullable:
+                        raise RuntimeError(format_error(
+                            "RuntimeError",
+                            f"Parameter {param.name.value} is not nullable",
+                            self.filename,
+                            self.source,
+                            param.name.line,
+                            param.name.column
+                        ))
+                    self.variables[param.name.value] = arg
+                return self.interpret(node.body)
+            finally:
+                self.pop_scope()
+        return lambda_func
 
     def interpret_class_def(self, node: ClassNode) -> None:
-        """Define a class."""
         prev_class = self.current_class
         self.current_class = node.name.value
         self.classes[node.name.value] = node
@@ -1155,7 +865,7 @@ class Interpreter:
             superclass_name = node.superclass.variable.value
             if superclass_name not in self.classes:
                 raise RuntimeError(format_error(
-                    "NameError",
+                    "RuntimeError",
                     f"Undefined superclass: {superclass_name}",
                     self.filename,
                     self.source,
@@ -1167,63 +877,7 @@ class Interpreter:
             interface_name = interface.variable.value
             if interface_name not in self.interfaces:
                 raise RuntimeError(format_error(
-                    "NameError",
-                    f"Undefined interface: {interface_name}",
-                    self.filename,
-                    self.source,
-                    interface.variable.line,
-                    interface.variable.column
-                ))
-        self.check_modifiers(node.modifiers, node.name.line, node.name.column)
-        for member in node.members:
-            self.interpret(member)
-        self.current_class = prev_class
-        if node.superclass:
-            self.super_class_stack.pop()
-
-    def interpret_struct_def(self, node: StructNode) -> None:
-        """Define a struct."""
-        self.classes[node.name.value] = node
-        self.check_modifiers(node.modifiers, node.name.line, node.name.column)
-        prev_class = self.current_class
-        self.current_class = node.name.value
-        for member in node.members:
-            self.interpret(member)
-        self.current_class = prev_class
-
-    def interpret_data_class_def(self, node: DataClassNode) -> None:
-        """Define a data class."""
-        self.classes[node.name.value] = node
-        self.check_modifiers(node.modifiers, node.name.line, node.name.column)
-        prev_class = self.current_class
-        self.current_class = node.name.value
-        for member in node.members:
-            self.interpret(member)
-        self.current_class = prev_class
-
-    def interpret_sealed_class_def(self, node: SealedClassNode) -> None:
-        """Define a sealed class."""
-        self.classes[node.name.value] = node
-        self.check_modifiers(node.modifiers, node.name.line, node.name.column)
-        prev_class = self.current_class
-        self.current_class = node.name.value
-        if node.superclass:
-            superclass_name = node.superclass.variable.value
-            if superclass_name not in self.classes:
-                raise RuntimeError(format_error(
-                    "NameError",
-                    f"Undefined superclass: {superclass_name}",
-                    self.filename,
-                    self.source,
-                    node.superclass.variable.line,
-                    node.superclass.variable.column
-                ))
-            self.super_class_stack.append(superclass_name)
-        for interface in node.interfaces:
-            interface_name = interface.variable.value
-            if interface_name not in self.interfaces:
-                raise RuntimeError(format_error(
-                    "NameError",
+                    "RuntimeError",
                     f"Undefined interface: {interface_name}",
                     self.filename,
                     self.source,
@@ -1231,106 +885,55 @@ class Interpreter:
                     interface.variable.column
                 ))
         for member in node.members:
-            self.interpret(member)
+            if isinstance(member, (VarDeclarationNode, ValDeclarationNode, ConstDeclarationNode, FunctionDefNode)):
+                self.interpret(member)
         self.current_class = prev_class
         if node.superclass:
             self.super_class_stack.pop()
-
-    def interpret_object_def(self, node: ObjectNode) -> None:
-        """Define a singleton object."""
-        self.classes[node.name.value] = node
-        self.check_modifiers(node.modifiers, node.name.line, node.name.column)
-        prev_class = self.current_class
-        self.current_class = node.name.value
-        instance = ClassInstance(node.name.value, {}, {})
-        self.set_variable(node.name.value, instance, node.name.line, node.name.column, is_const=True)
-        for member in node.members:
-            self.interpret(member)
-        self.current_class = prev_class
-
-    def interpret_companion_object(self, node: CompanionObjectNode) -> None:
-        """Define a companion object."""
-        if not self.current_class:
-            raise RuntimeError(format_error(
-                "SyntaxError",
-                "Companion object must be defined inside a class",
-                self.filename,
-                self.source,
-                getattr(node, 'line', 1),
-                getattr(node, 'column', 1)
-            ))
-        for member in node.members:
-            self.interpret(member)
+        return None
 
     def interpret_interface_def(self, node: InterfaceNode) -> None:
-        """Define an interface."""
         self.interfaces[node.name.value] = node
-        self.check_modifiers(node.modifiers, node.name.line, node.name.column)
+        return None
 
     def interpret_enum_def(self, node: EnumNode) -> None:
-        """Define an enum."""
         self.enums[node.name.value] = node
         for value in node.values:
-            enum_instance = EnumInstance(node.name.value, value.value)
-            self.set_variable(value.value, enum_instance, value.line, value.column, is_const=True)
-        prev_class = self.current_class
-        self.current_class = node.name.value
+            self.variables[value.value] = value.value
         for member in node.members:
             self.interpret(member)
-        self.current_class = prev_class
+        return None
 
     def interpret_return(self, node: ReturnNode) -> Any:
-        """Interpret return statement."""
         return self.interpret(node.expression) if node.expression else None
 
     def interpret_print(self, node: PrintNode) -> None:
-        """Interpret print statement."""
         value = self.interpret(node.expression)
         print(value)
-
-    def interpret_input(self, node: InputNode) -> str:
-        """Interpret input statement."""
-        if node.prompt:
-            prompt = self.interpret(node.prompt)
-            return input(str(prompt))
-        return input()
-
-    def interpret_read_line(self, node: ReadLineNode) -> str:
-        """Interpret readline statement."""
-        return input()
+        return None
 
     def interpret_instanceof(self, node: InstanceOfNode) -> bool:
-        """Interpret instanceof operator."""
         value = self.interpret(node.expression)
         type_name = node.type_token.value
-        if type_name == 'Int':
+        if node.type_token.type.name == 'VARIABLE':
+            return isinstance(value, dict) and value.get('__class__') == type_name
+        elif node.type_token.type.name == 'INT':
             return isinstance(value, int)
-        elif type_name in ('Float', 'Double'):
+        elif node.type_token.type.name in ('FLOAT', 'DOUBLE'):
             return isinstance(value, float)
-        elif type_name == 'Boolean':
+        elif node.type_token.type.name == 'BOOLEAN':
             return isinstance(value, bool)
-        elif type_name == 'String':
+        elif node.type_token.type.name == 'STRING_TYPE':
             return isinstance(value, str)
-        elif type_name == 'Char':
-            return isinstance(value, str) and len(value) == 1
-        elif type_name == 'Byte':
-            return isinstance(value, int) and 0 <= value <= 255
-        elif type_name == 'Any':
+        elif node.type_token.type.name == 'ANY':
             return True
-        elif type_name in self.classes:
-            return isinstance(value, ClassInstance) and value.class_name == type_name
-        elif type_name in self.enums:
-            return isinstance(value, EnumInstance) and value.enum_name == type_name
-        elif type_name.endswith('*'):
-            return isinstance(value, int) and value in self.memory
         return False
 
-    def interpret_new(self, node: NewNode) -> ClassInstance:
-        """Create a new instance."""
+    def interpret_new(self, node: NewNode) -> Any:
         class_name = node.type_token.value
         if class_name not in self.classes:
             raise RuntimeError(format_error(
-                "NameError",
+                "RuntimeError",
                 f"Undefined class: {class_name}",
                 self.filename,
                 self.source,
@@ -1339,150 +942,19 @@ class Interpreter:
             ))
         class_def = self.classes[class_name]
         args = [self.interpret(arg) for arg in node.args]
-        fields = {}
-        methods = {}
+        instance = {'__class__': class_name}
         self.push_scope()
         try:
-            self.set_variable('this', ClassInstance(class_name, fields, methods), node.type_token.line, node.type_token.column)
+            self.variables['this'] = instance
             for member in class_def.members:
                 if isinstance(member, (VarDeclarationNode, ValDeclarationNode, ConstDeclarationNode)):
-                    value = self.interpret(member)
-                    fields[member.variable.variable.value] = value
-                elif isinstance(member, FunctionDefNode):
-                    methods[member.name.value] = member
-            instance = ClassInstance(class_name, fields, methods)
-            self.set_variable('this', instance, node.type_token.line, node.type_token.column)
-            return instance
+                    self.interpret(member)
+                    instance[member.variable.variable.value] = self.variables[member.variable.variable.value]
         finally:
             self.pop_scope()
-
-    def interpret_alloc(self, node: AllocNode) -> int:
-        """Allocate memory and return a pointer."""
-        type_token = node.type_token(True)
-        addr = self.next_mem_addr
-        self.next_mem_addr += 1
-        self.memory[addr] = MemoryRef(None, node.type_token)
-        return addr
-
-    def interpret_free(self, node: FreeNode) -> None:
-        """Free allocated memory."""
-        addr = self.interpret(node.expression)
-        if not isinstance(addr, int) or addr not in self.memory:
-            raise RuntimeError(format_error(
-                "RuntimeError",
-                f"Invalid pointer address: {addr}",
-                self.filename,
-                self.source,
-                node.expression.line,
-                node.expression.column
-            ))
-        self.memory[addr].is_valid = False
-        del self.memory[addr]
-
-    def interpret_deref(self, node: DerefNode) -> Any:
-        """Dereference a pointer."""
-        addr = self.interpret(node.expression)
-        if not isinstance(addr, int) or addr not in self.memory:
-            raise RuntimeError(format_error(
-                "RuntimeError",
-                f"Invalid pointer address: {addr}",
-                self.filename,
-                self.source,
-                node.expression.line,
-                node.expression.column
-            ))
-        mem_ref = self.memory[addr]
-        if not mem_ref.is_valid:
-            raise RuntimeError(format_error(
-                "RuntimeError",
-                f"Dereferencing invalid pointer",
-                self.filename,
-                self.source,
-                node.expression.line,
-                node.expression.column
-            ))
-        return mem_ref.value
-
-    def interpret_reference(self, node: ReferenceNode) -> int:
-        """Get the address of a variable."""
-        if not isinstance(node.expression, VariableNode):
-            raise RuntimeError(format_error(
-                "SyntaxError",
-                f"Reference operator requires a variable",
-                self.filename,
-                self.source,
-                node.expression.line,
-                node.expression.column
-            ))
-        var_name = node.expression.variable.value
-        value = self.get_variable(var_name, node.expression.variable.line, node.expression.variable.column)
-        addr = self.next_mem_addr
-        self.next_mem_addr += 1
-        self.memory[addr] = MemoryRef(value, lambda x: Token(value='Any', type=TokenType.VARIABLE, line=node.expression.line, column=node.expression.column))
-        return addr
-
-    def interpret_this(self, node: ThisNode) -> ClassInstance:
-        """Interpret this keyword."""
-        if not self.current_class:
-            raise RuntimeError(format_error(
-                "SyntaxError",
-                "'this' can only be used inside a class",
-                self.filename,
-                self.source,
-                node.token.line,
-                node.token.column
-            ))
-        return self.get_variable('this', node.token.line, node.token.column)
-
-    def interpret_super(self, node: SuperNode) -> ClassInstance:
-        """Interpret super keyword."""
-        if not self.current_class or not self.super_class_stack:
-            raise RuntimeError(format_error(
-                "SyntaxError",
-                "'super' can only be used inside a class with a superclass",
-                self.filename,
-                self.source,
-                node.token.line,
-                node.token.column
-            ))
-        this_obj = self.get_variable('this', node.token.line, node.token.column)
-        superclass_name = self.super_class_stack[-1]
-        return ClassInstance(superclass_name, this_obj.fields.copy(), this_obj.methods.copy())
-
-    def interpret_yield(self, node: YieldNode) -> Generator:
-        """Interpret yield expression."""
-        value = self.interpret(node.expression) if node.expression else None
-        def generator():
-            yield value
-        return Generator(generator())
-
-    def interpret_await(self, node: AwaitNode) -> Any:
-        """Interpret await expression."""
-        if not self.async_context:
-            raise RuntimeError(format_error(
-                "SyntaxError",
-                "'await' can only be used inside async functions",
-                self.filename,
-                self.source,
-                node.expression.line,
-                node.expression.column
-            ))
-        value = self.interpret(node.expression)
-        if not isinstance(value, Coroutine):
-            raise TypeError(format_error(
-                "TypeError",
-                f"'await' requires a coroutine, got {type(value).__name__}",
-                self.filename,
-                self.source,
-                node.expression.line,
-                node.expression.column
-            ))
-        async def run():
-            return await value
-        return asyncio.run(run())
+        return instance
 
     def interpret_block(self, node: BlockNode) -> Any:
-        """Interpret a block of statements."""
         self.push_scope()
         try:
             for stmt in node.statements:
@@ -1492,3 +964,29 @@ class Interpreter:
             return None
         finally:
             self.pop_scope()
+
+    def interpret_this(self, node: ThisNode) -> Any:
+        if not self.current_class:
+            raise RuntimeError(format_error(
+                "RuntimeError",
+                "'this' can only be used inside a class",
+                self.filename,
+                self.source,
+                node.token.line,
+                node.token.column
+            ))
+        return self.get_variable('this', node.token.line, node.token.column)
+
+    def interpret_super(self, node: SuperNode) -> Any:
+        if not self.current_class or not self.super_class_stack:
+            raise RuntimeError(format_error(
+                "RuntimeError",
+                "'super' can only be used inside a class with a superclass",
+                self.filename,
+                self.source,
+                node.token.line,
+                node.token.column
+            ))
+        this_obj = self.get_variable('this', node.token.line, node.token.column)
+        superclass_name = self.super_class_stack[-1]
+        return {'__class__': superclass_name, **this_obj}
