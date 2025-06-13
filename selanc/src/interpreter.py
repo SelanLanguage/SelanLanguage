@@ -329,6 +329,18 @@ class Interpreter:
         if isinstance(node, FunctionDefNode):
             if not isinstance(node.body, (BlockNode, ReturnNode)):
                 raise InterpreterError(f"Invalid AST: Function {node.name.value} body must be BlockNode or ReturnNode, got {type(node.body).__name__}")
+            if node.return_type and node.return_type.value != 'void':
+                # Check if the function has a return statement
+                has_return = False
+                if isinstance(node.body, ReturnNode):
+                    has_return = True
+                elif isinstance(node.body, BlockNode):
+                    for stmt in node.body.statements:
+                        if isinstance(stmt, ReturnNode):
+                            has_return = True
+                            break
+                if not has_return:
+                    raise InterpreterError(f"Invalid AST: Function {node.name.value} with return type {node.return_type.value} must contain a return statement")
             self.validate_ast(node.body)
         elif isinstance(node, BlockNode):
             for stmt in node.statements:
@@ -1038,6 +1050,10 @@ class Interpreter:
             if self.debug:
                 logger.debug(f"Executing method {method_name} body (type: {type(method.body).__name__})")
                 logger.debug(f"Method body AST:\n{self.dump_ast(method.body)}")
+                if isinstance(method.body, BlockNode):
+                    logger.debug(f"Block contains {len(method.body.statements)} statements")
+                    for i, stmt in enumerate(method.body.statements):
+                        logger.debug(f"Statement {i+1}: {type(stmt).__name__}")
             if isinstance(method.body, ReturnNode):
                 if self.debug:
                     logger.debug(f"Method body is a ReturnNode, interpreting directly")
@@ -1058,6 +1074,7 @@ class Interpreter:
             if method.return_type and method.return_type.value != 'void':
                 if self.debug:
                     logger.error(f"Method {method_name} did not return a value; expected {method.return_type.value}")
+                    logger.error(f"Method body AST (re-dumped):\n{self.dump_ast(method.body)}")
                 raise InterpreterError(format_error(
                     "RuntimeError",
                     f"Method {method_name} must return a value of type {method.return_type.value}",
@@ -1344,15 +1361,15 @@ class Interpreter:
                 if self.debug:
                     logger.debug("Block is empty, returning None")
                 return None
-            for stmt in node.statements:
+            for i, stmt in enumerate(node.statements):
                 if self.debug:
-                    logger.debug(f"Interpreting statement: {type(stmt).__name__} at line {getattr(stmt, 'line', 'unknown')}, column {getattr(stmt, 'column', 'unknown')}")
+                    logger.debug(f"Interpreting statement {i+1}/{len(node.statements)}: {type(stmt).__name__} at line {getattr(stmt, 'line', 'unknown')}, column {getattr(stmt, 'column', 'unknown')}")
                     logger.debug(f"Statement AST:\n{self.dump_ast(stmt)}")
                 try:
                     result = self.interpret(stmt)
                 except Exception as e:
                     if self.debug:
-                        logger.error(f"Error interpreting statement {type(stmt).__name__}: {str(e)}")
+                        logger.error(f"Error interpreting statement {i+1} ({type(stmt).__name__}): {str(e)}")
                     raise InterpreterError(format_error(
                         "RuntimeError",
                         f"Error interpreting statement {type(stmt).__name__}: {str(e)}",
@@ -1363,10 +1380,10 @@ class Interpreter:
                         token_length=1
                     ))
                 if self.debug:
-                    logger.debug(f"Statement result: {result} (type: {type(result).__name__})")
+                    logger.debug(f"Statement {i+1} result: {result} (type: {type(result).__name__})")
                 if isinstance(result, (ReturnNode, BreakNode, ContinueNode)):
                     if self.debug:
-                        logger.debug(f"Block statement returned control node: {type(result).__name__}")
+                        logger.debug(f"Block statement {i+1} returned control node: {type(result).__name__}")
                     if isinstance(result, ReturnNode):
                         return_value = self.interpret_return(result)
                         if self.debug:
