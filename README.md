@@ -34,3 +34,5 @@ Neon source files use the following extensions:
 ---
 
 ## 📜 License
+
+### MIT
