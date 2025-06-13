@@ -330,17 +330,26 @@ class Interpreter:
             if not isinstance(node.body, (BlockNode, ReturnNode)):
                 raise InterpreterError(f"Invalid AST: Function {node.name.value} body must be BlockNode or ReturnNode, got {type(node.body).__name__}")
             if node.return_type and node.return_type.value != 'void':
-                # Check if the function has a return statement
                 has_return = False
                 if isinstance(node.body, ReturnNode):
-                    has_return = True
+                    if node.body.expression:
+                        if isinstance(node.body.expression, VariableNode) and not node.body.expression.variable.value:
+                            raise InterpreterError(f"Invalid AST: Function {node.name.value} return expression is an empty VariableNode")
+                        has_return = True
+                    else:
+                        raise InterpreterError(f"Invalid AST: Function {node.name.value} with return type {node.return_type.value} has no return expression")
                 elif isinstance(node.body, BlockNode):
                     for stmt in node.body.statements:
                         if isinstance(stmt, ReturnNode):
-                            has_return = True
+                            if stmt.expression:
+                                if isinstance(stmt.expression, VariableNode) and not stmt.expression.variable.value:
+                                    raise InterpreterError(f"Invalid AST: Function {node.name.value} return expression is an empty VariableNode")
+                                has_return = True
+                            else:
+                                raise InterpreterError(f"Invalid AST: Function {node.name.value} with return type {node.return_type.value} has no return expression")
                             break
                 if not has_return:
-                    raise InterpreterError(f"Invalid AST: Function {node.name.value} with return type {node.return_type.value} must contain a return statement")
+                    raise InterpreterError(f"Invalid AST: Function {node.name.value} with return type {node.return_type.value} must contain a valid return statement")
             self.validate_ast(node.body)
         elif isinstance(node, BlockNode):
             for stmt in node.statements:
@@ -370,6 +379,7 @@ class Interpreter:
         try:
             if self.debug:
                 logger.debug(f"Validating program AST")
+                logger.debug(f"Full Program AST:\n{self.dump_ast(node)}")
                 self.validate_ast(node)
             method_map = {
                 ProgramNode: self.interpret_program,
@@ -1280,7 +1290,22 @@ class Interpreter:
     # --- Miscellaneous ---
     def interpret_return(self, node: ReturnNode) -> Any:
         """Interpret a return statement."""
-        value = self.interpret(node.expression) if node.expression else None
+        if node.expression:
+            if isinstance(node.expression, VariableNode) and not node.expression.variable.value:
+                if self.debug:
+                    logger.warning(f"Return expression is an empty VariableNode, likely a parser error for string literal")
+                raise InterpreterError(format_error(
+                    "RuntimeError",
+                    "Invalid return expression: empty variable reference, expected string literal",
+                    self.filename,
+                    self.source,
+                    getattr(node, 'line', 1),
+                    getattr(node, 'column', 1),
+                    token_length=1
+                ))
+            value = self.interpret(node.expression)
+        else:
+            value = None
         if self.debug:
             logger.debug(f"Returning value: {value} (type: {type(value).__name__})")
         return value
