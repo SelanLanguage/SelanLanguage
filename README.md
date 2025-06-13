@@ -1,6 +1,6 @@
-# Neon
+# Selan
 
-**What is NeonLanguage?**  
+**What is SelanLanguage?**  
 Neon is a minimalistic and low-level programming language.  
 In the future, it will support compilation into pure, lightweight executables — with no runtime and no dependencies.
 
@@ -18,8 +18,8 @@ In the future, it will support compilation into pure, lightweight executables �
 
 ## 🚧 What's now?
 
-Currently, Neon is a basic interpreted language written in python.  
-This is an early implementation of the Neon interpreter, written from scratch (with AI support).  
+Currently, Selan is a basic interpreted language written in python.  
+This is an early implementation of the Selan interpreter, written from scratch (with AI support).  
 Compilation and system-level features are planned for future releases.
 
 ---
@@ -28,9 +28,8 @@ Compilation and system-level features are planned for future releases.
 
 Neon source files use the following extensions:
 
-- `.ne` (main extension)
-- `.n`
-- `.neon`
+- `.selan` (main extension)
+- `.se`
 
 ---
 
