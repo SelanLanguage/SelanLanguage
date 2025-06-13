@@ -36,7 +36,7 @@ class Parser:
         self.pos += 1
         self.current_token = self.tokens[self.pos] if self.pos < len(self.tokens) else None
         if self.debug:
-            logger.debug(f"Advanced to token: {self.current_token.type.name if self.current_token else 'None'}")
+            logger.debug(f"Advanced to token: {self.current_token.type.name if self.current_token else 'None'} at pos={self.pos}")
 
     def match(self, *token_types: TokenType) -> bool:
         """Checks if the current token matches any of the given token types and advances if matched."""
@@ -431,7 +431,8 @@ class Parser:
         self.expect('FUNCTION')
         name = self.expect('VARIABLE')
         if self.debug:
-            logger.debug(f"Parsing function {name.value} at line {name.line}, col {name.column}")
+            logger.debug(f"parse_function_def: Parsing function {name.value} at line {name.line}, col {name.column}, pos={self.pos}")
+            logger.debug(f"parse_function_def: Next token after name: {self.current_token.type.name if self.current_token else 'None'}")
         self.expect('LPAREN')
         params = []
         if self.current_token and self.current_token.type.name != 'RPAREN':
@@ -444,7 +445,11 @@ class Parser:
         if self.current_token and self.current_token.type.name == 'COLON':
             self.advance()
             return_type = self.parse_type()
+        if self.debug:
+            logger.debug(f"parse_function_def: Before parsing body, current token: {self.current_token.type.name if self.current_token else 'None'}, pos={self.pos}")
         body = self.parse_block()
+        if self.debug:
+            logger.debug(f"parse_function_def: Finished parsing function {name.value}, current token: {self.current_token.type.name if self.current_token else 'None'}, pos={self.pos}")
         return FunctionDefNode(name, params, return_type, body, modifiers)
 
     def parse_param(self) -> ParameterNode:
@@ -557,11 +562,30 @@ class Parser:
     def parse_return_statement(self) -> ReturnNode:
         """Parses a return statement."""
         return_token = self.expect('RETURN')
+        if self.debug:
+            logger.debug(f"parse_return_statement: After RETURN, current token: type={self.current_token.type.name if self.current_token else 'None'}, value={repr(self.current_token.value) if self.current_token else 'None'}, line={self.current_token.line if self.current_token else -1}, column={self.current_token.column if self.current_token else -1}, pos={self.pos}")
         expr = None
         if self.current_token and self.current_token.type.name != 'SEMICOLON':
-            if self.debug:
-                logger.debug(f"Parsing return expression, current token: type={self.current_token.type.name}, value={self.current_token.value!r}, line={self.current_token.line}, column={self.current_token.column}")
-            expr = self.parse_expression()
+            if self.current_token.type.name == 'STRING':  # Safeguard for string literals
+                token = self.current_token
+                self.advance()
+                if not token.value.startswith('"') or not token.value.endswith('"'):
+                    raise SyntaxError(format_error(
+                        "SyntaxError",
+                        f"Invalid string literal: {token.value}",
+                        self.filename,
+                        self.source,
+                        token.line,
+                        token.column,
+                        token_length=len(token.value) if token.value else 1
+                    ))
+                expr = StringNode(token)
+                if self.debug:
+                    logger.debug(f"parse_return_statement: Created StringNode for {repr(token.value)}")
+            else:
+                expr = self.parse_expression()
+                if self.debug:
+                    logger.debug(f"parse_return_statement: Parsed expression: {expr}")
         self.expect('SEMICOLON')
         return ReturnNode(expr, return_token.line, return_token.column)
 
@@ -764,19 +788,12 @@ class Parser:
 
         token = self.current_token
         if self.debug:
-            token_type = token.type.name
-            token_value = repr(token.value)
-            token_line = token.line
-            token_column = token.column
-            logger.debug(f"parse_primary: Current token: type={token_type}, value={token_value}, line={token_line}, column={token_column}, pos={self.pos}")
-            # Simplify token context logging
-            context_tokens = self.tokens[max(0, self.pos-2):min(len(self.tokens), self.pos+3)]
-            context_str = ", ".join(f"{t.type.name}:{t.value!r}" for t in context_tokens)
-            logger.debug(f"parse_primary: Token context: [{context_str}]")
+            logger.debug(f"parse_primary: Current token: type={token.type.name}, value={repr(token.value)}, line={token.line}, column={token.column}, pos={self.pos}")
+            context = ", ".join(f"{t.type.name}:{repr(t.value)}" for t in self.tokens[max(0, self.pos-2):min(len(self.tokens), self.pos+3)])
+            logger.debug(f"parse_primary: Token context: [{context}]")
         self.advance()
         if self.debug:
-            next_token_type = self.current_token.type.name if self.current_token else 'None'
-            logger.debug(f"parse_primary: After advance, next token: {next_token_type}, pos={self.pos}")
+            logger.debug(f"parse_primary: After advance, next token: {self.current_token.type.name if self.current_token else 'None'}, pos={self.pos}")
 
         if token.type.name == 'NUMBER':
             return NumberNode(token)
@@ -856,51 +873,6 @@ class Parser:
             token.column,
             token_length=len(token.value) if token.value else 1
         ))
-
-        def parse_return_statement(self) -> ReturnNode:
-            """Parses a return statement."""
-            return_token = self.expect('RETURN')
-            if self.debug:
-                token_type = self.current_token.type.name if self.current_token else 'None'
-                token_value = repr(self.current_token.value) if self.current_token else 'None'
-                token_line = self.current_token.line if self.current_token else -1
-                token_column = self.current_token.column if self.current_token else -1
-                logger.debug(f"parse_return_statement: After RETURN, current token: type={token_type}, value={token_value}, line={token_line}, column={token_column}, pos={self.pos}")
-            expr = None
-            if self.current_token and self.current_token.type.name != 'SEMICOLON':
-                expr = self.parse_expression()
-                if self.debug:
-                    logger.debug(f"parse_return_statement: Parsed expression: {expr}")
-            self.expect('SEMICOLON')
-            return ReturnNode(expr, return_token.line, return_token.column)
-
-        def parse_function_def(self, modifiers: List[Token] = None) -> FunctionDefNode:
-            """Parses a function definition."""
-            if not modifiers:
-                modifiers = []
-            self.expect('FUNCTION')
-            name = self.expect('VARIABLE')
-            if self.debug:
-                logger.debug(f"parse_function_def: Parsing function {name.value} at line {name.line}, col {name.column}, pos={self.pos}")
-                next_token_type = self.current_token.type.name if self.current_token else 'None'
-                logger.debug(f"parse_function_def: Next token after name: {next_token_type}")
-            self.expect('LPAREN')
-            params = []
-            if self.current_token and self.current_token.type.name != 'RPAREN':
-                params.append(self.parse_param())
-                while self.current_token and self.current_token.type.name == 'COMMA':
-                    self.advance()
-                    params.append(self.parse_param())
-            self.expect('RPAREN')
-            return_type = None
-            if self.current_token and self.current_token.type.name == 'COLON':
-                self.advance()
-                return_type = self.parse_type()
-            if self.debug:
-                body_token_type = self.current_token.type.name if self.current_token else 'None'
-                logger.debug(f"parse_function_def: Before parsing body, current token: {body_token_type}")
-            body = self.parse_block()
-            return FunctionDefNode(name, params, return_type, body, modifiers)
 
     def parse_function_call(self, func_token: Token) -> FunctionCallNode:
         """Parses a function call."""
