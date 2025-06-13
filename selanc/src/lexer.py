@@ -169,10 +169,16 @@ class Lexer:
         self.pos += len(value)
 
     def lex_analysis(self) -> List[Token]:
+        """Tokenizes the source code and writes tokens to tokens.log."""
         try:
-            while self.next_token():
-                pass
-            self.token_list.append(Token(token_types_list["EOF"], "", self.pos, self.line, self.column))
+            with open('tokens.log', 'w', encoding='utf-8') as f:
+                while self.next_token():
+                    token = self.token_list[-1]
+                    f.write(f"Token: type={token.type.name}, value={token.value!r}, line={token.line}, column={token.column}\n")
+                self.token_list.append(Token(token_types_list["EOF"], "", self.pos, self.line, self.column))
+                f.write(f"Token: type=EOF, value='', line={self.line}, column={self.column}\n")
+            # Validate tokens before returning
+            self.validate_tokens()
             return [token for token in self.token_list if not self._is_skipped_token(token)]
         except LexerError as e:
             raise SyntaxError(str(e)) from e
@@ -190,7 +196,7 @@ class Lexer:
                 token = Token(spec.token_type, value, self.pos, self.line, self.column)
                 self.token_list.append(token)
                 if self.debug:
-                    logger.info(f"Token: {spec.name}('{value}') at {self.line}:{self.column}")
+                    logger.info(f"Token created: {spec.name}('{value}') at {self.line}:{self.column}")
                 self.update_position(value)
                 return True
 
@@ -210,18 +216,19 @@ class Lexer:
         return any(spec.skip and spec.name == token.type.name for spec in self.TOKEN_SPECS)
 
     def validate_tokens(self) -> None:
-        """Validates the token list for common issues (e.g., unclosed strings)."""
+        """Validates the token list for common issues (e.g., unclosed strings, empty identifiers)."""
         for token in self.token_list:
-            if token.type.name == "STRING" and not token.value.endswith('"'):
-                raise LexerError(format_error(
-                    "SyntaxError",
-                    "Unclosed string literal",
-                    self.filename,
-                    self.code,
-                    token.line,
-                    token.column,
-                    token_length=len(token.value)
-                ))
+            if token.type.name == "STRING":
+                if not token.value.startswith('"') or not token.value.endswith('"'):
+                    raise LexerError(format_error(
+                        "SyntaxError",
+                        f"Unclosed or malformed string literal: {token.value}",
+                        self.filename,
+                        self.code,
+                        token.line,
+                        token.column,
+                        token_length=len(token.value)
+                    ))
             if token.type.name == "CHAR" and len(token.value) != 3:
                 raise LexerError(format_error(
                     "SyntaxError",
@@ -231,6 +238,16 @@ class Lexer:
                     token.line,
                     token.column,
                     token_length=len(token.value)
+                ))
+            if token.type.name == "VARIABLE" and not token.value.strip():
+                raise LexerError(format_error(
+                    "SyntaxError",
+                    "Empty variable identifier",
+                    self.filename,
+                    self.code,
+                    token.line,
+                    token.column,
+                    token_length=1
                 ))
 
     @classmethod

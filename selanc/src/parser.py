@@ -36,7 +36,7 @@ class Parser:
         self.pos += 1
         self.current_token = self.tokens[self.pos] if self.pos < len(self.tokens) else None
         if self.debug:
-            logger.debug(f"Advanced to token: {self.current_token.type.name if self.current_token else 'None'}")
+            logger.debug(f"Advanced to token: {self.current_token.type.name if self.current_token else 'None'} at pos={self.pos}")
 
     def match(self, *token_types: TokenType) -> bool:
         """Checks if the current token matches any of the given token types and advances if matched."""
@@ -114,7 +114,7 @@ class Parser:
                 else:
                     statements.append(self.parse_statement())
             except SyntaxError as e:
-                print(str(e))
+                logger.error(str(e))
                 self.current_token = None
                 break
         if self.debug:
@@ -189,13 +189,15 @@ class Parser:
         elif self.current_token.type.name == 'RETURN':
             return self.parse_return_statement()
         elif self.current_token.type.name == 'BREAK':
+            token = self.current_token
             self.advance()
             self.expect('SEMICOLON')
-            return BreakNode()
+            return BreakNode(token.line, token.column)
         elif self.current_token.type.name == 'CONTINUE':
+            token = self.current_token
             self.advance()
             self.expect('SEMICOLON')
-            return ContinueNode()
+            return ContinueNode(token.line, token.column)
         elif self.current_token.type.name == 'PRINT':
             return self.parse_print_statement()
         elif self.current_token.type.name == 'INPUT':
@@ -428,6 +430,9 @@ class Parser:
             modifiers = []
         self.expect('FUNCTION')
         name = self.expect('VARIABLE')
+        if self.debug:
+            logger.debug(f"parse_function_def: Parsing function {name.value} at line {name.line}, col {name.column}, pos={self.pos}")
+            logger.debug(f"parse_function_def: Next token after name: {self.current_token.type.name if self.current_token else 'None'}")
         self.expect('LPAREN')
         params = []
         if self.current_token and self.current_token.type.name != 'RPAREN':
@@ -440,7 +445,11 @@ class Parser:
         if self.current_token and self.current_token.type.name == 'COLON':
             self.advance()
             return_type = self.parse_type()
+        if self.debug:
+            logger.debug(f"parse_function_def: Before parsing body, current token: {self.current_token.type.name if self.current_token else 'None'}, pos={self.pos}")
         body = self.parse_block()
+        if self.debug:
+            logger.debug(f"parse_function_def: Finished parsing function {name.value}, current token: {self.current_token.type.name if self.current_token else 'None'}, pos={self.pos}")
         return FunctionDefNode(name, params, return_type, body, modifiers)
 
     def parse_param(self) -> ParameterNode:
@@ -552,10 +561,33 @@ class Parser:
 
     def parse_return_statement(self) -> ReturnNode:
         """Parses a return statement."""
-        self.expect('RETURN')
-        expr = self.parse_expression() if self.current_token and self.current_token.type.name != 'SEMICOLON' else None
+        return_token = self.expect('RETURN')
+        if self.debug:
+            logger.debug(f"parse_return_statement: After RETURN, current token: type={self.current_token.type.name if self.current_token else 'None'}, value={repr(self.current_token.value) if self.current_token else 'None'}, line={self.current_token.line if self.current_token else -1}, column={self.current_token.column if self.current_token else -1}, pos={self.pos}")
+        expr = None
+        if self.current_token and self.current_token.type.name != 'SEMICOLON':
+            if self.current_token.type.name == 'STRING':  # Safeguard for string literals
+                token = self.current_token
+                self.advance()
+                if not token.value.startswith('"') or not token.value.endswith('"'):
+                    raise SyntaxError(format_error(
+                        "SyntaxError",
+                        f"Invalid string literal: {token.value}",
+                        self.filename,
+                        self.source,
+                        token.line,
+                        token.column,
+                        token_length=len(token.value) if token.value else 1
+                    ))
+                expr = StringNode(token)
+                if self.debug:
+                    logger.debug(f"parse_return_statement: Created StringNode for {repr(token.value)}")
+            else:
+                expr = self.parse_expression()
+                if self.debug:
+                    logger.debug(f"parse_return_statement: Parsed expression: {expr}")
         self.expect('SEMICOLON')
-        return ReturnNode(expr)
+        return ReturnNode(expr, return_token.line, return_token.column)
 
     def parse_print_statement(self) -> PrintNode:
         """Parses a print statement."""
@@ -568,12 +600,12 @@ class Parser:
 
     def parse_block(self) -> BlockNode:
         """Parses a block of statements."""
-        self.expect('LBRACE')
+        lbrace_token = self.expect('LBRACE')
         statements = []
         while self.current_token and self.current_token.type.name != 'RBRACE':
             statements.append(self.parse_statement())
         self.expect('RBRACE')
-        return BlockNode(statements)
+        return BlockNode(statements, lbrace_token.line, lbrace_token.column)
 
     def parse_expression(self) -> ExpressionNode:
         """Parses an expression."""
@@ -742,7 +774,7 @@ class Parser:
         return self.parse_primary()
 
     def parse_primary(self) -> ExpressionNode:
-        """Parses a primary expression."""
+        """Parses primary expressions (literals, variables, function calls, etc.)."""
         if not self.current_token:
             raise SyntaxError(format_error(
                 "SyntaxError",
@@ -755,11 +787,29 @@ class Parser:
             ))
 
         token = self.current_token
+        if self.debug:
+            logger.debug(f"parse_primary: Current token: type={token.type.name}, value={repr(token.value)}, line={token.line}, column={token.column}, pos={self.pos}")
+            context = ", ".join(f"{t.type.name}:{repr(t.value)}" for t in self.tokens[max(0, self.pos-2):min(len(self.tokens), self.pos+3)])
+            logger.debug(f"parse_primary: Token context: [{context}]")
         self.advance()
+        if self.debug:
+            logger.debug(f"parse_primary: After advance, next token: {self.current_token.type.name if self.current_token else 'None'}, pos={self.pos}")
 
         if token.type.name == 'NUMBER':
             return NumberNode(token)
         elif token.type.name == 'STRING':
+            if not token.value.startswith('"') or not token.value.endswith('"'):
+                raise SyntaxError(format_error(
+                    "SyntaxError",
+                    f"Invalid string literal: {token.value}",
+                    self.filename,
+                    self.source,
+                    token.line,
+                    token.column,
+                    token_length=len(token.value) if token.value else 1
+                ))
+            if self.debug:
+                logger.debug(f"parse_primary: Creating StringNode for {repr(token.value)}")
             return StringNode(token)
         elif token.type.name == 'CHAR':
             return CharNode(token)
@@ -779,6 +829,16 @@ class Parser:
             self.expect('RPAREN')
             return InputNode(token, prompt)
         elif token.type.name == 'VARIABLE':
+            if not token.value.strip():
+                raise SyntaxError(format_error(
+                    "SyntaxError",
+                    "Empty variable identifier",
+                    self.filename,
+                    self.source,
+                    token.line,
+                    token.column,
+                    token_length=1
+                ))
             keyword_values = {
                 'print', 'if', 'else', 'while', 'for', 'do', 'switch', 'case', 'default', 'return', 'fun',
                 'class', 'interface', 'enum', 'var', 'val', 'const', 'break', 'continue', 'try', 'catch',
@@ -795,6 +855,8 @@ class Parser:
                     token.column,
                     token_length=len(token.value)
                 ))
+            if self.debug:
+                logger.debug(f"parse_primary: Creating VariableNode for {repr(token.value)}")
             if self.current_token and self.current_token.type.name == 'LPAREN':
                 return self.parse_function_call(token)
             return VariableNode(token)

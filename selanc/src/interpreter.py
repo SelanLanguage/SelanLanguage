@@ -9,7 +9,7 @@ from .ast import *
 from .error import format_error
 
 # Configure logging for detailed debugging
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.DEBUG, filename='interpreter.log', filemode='w')
 logger = logging.getLogger(__name__)
 
 class TypeCategory(Enum):
@@ -306,6 +306,8 @@ class Interpreter:
                 result.append(self.dump_ast(expr, indent + 1))
         elif isinstance(node, StringNode):
             result.append(f"{indent_str}{type(node).__name__}: value={node.value} (line={line}, col={column})")
+        elif isinstance(node, VariableNode):
+            result.append(f"{indent_str}{type(node).__name__}: value={node.variable.value!r} (line={line}, col={column})")
         elif isinstance(node, (ClassNode, VarDeclarationNode, PrintNode, NewNode, MemberCallNode)):
             result.append(f"{indent_str}{type(node).__name__}: (line={line}, col={column})")
             for attr in ['name', 'variable', 'expression', 'obj', 'method']:
@@ -319,7 +321,7 @@ class Interpreter:
                         result.append(self.dump_ast(item, indent + 1))
         else:
             value = getattr(node, 'value', '')
-            result.append(f"{indent_str}{type(node).__name__}: value={value} (line={line}, col={column})")
+            result.append(f"{indent_str}{type(node).__name__}: value={value!r} (line={line}, col={column})")
         return "\n".join(result)
 
     def validate_ast(self, node: ExpressionNode) -> None:
@@ -329,7 +331,29 @@ class Interpreter:
         if isinstance(node, FunctionDefNode):
             if not isinstance(node.body, (BlockNode, ReturnNode)):
                 raise InterpreterError(f"Invalid AST: Function {node.name.value} body must be BlockNode or ReturnNode, got {type(node.body).__name__}")
-            self.validate_ast(node.body)
+            if node.return_type and node.return_type.value != 'void':
+                has_valid_return = False
+                if isinstance(node.body, ReturnNode):
+                    if not node.body.expression:
+                        raise InterpreterError(f"Invalid AST: Function {node.name.value} with return type {node.return_type.value} has no return expression")
+                    if node.return_type.value == 'string' and not isinstance(node.body.expression, StringNode):
+                        logger.error(f"Invalid return expression type in {node.name.value}:\n{self.dump_ast(node.body)}")
+                        raise InterpreterError(f"Invalid AST: Function {node.name.value} expected string return, got {type(node.body.expression).__name__}")
+                    has_valid_return = True
+                elif isinstance(node.body, BlockNode):
+                    for stmt in node.body.statements:
+                        if isinstance(stmt, ReturnNode):
+                            if not stmt.expression:
+                                raise InterpreterError(f"Invalid AST: Function {node.name.value} with return type {node.return_type.value} has no return expression")
+                            if node.return_type.value == 'string' and not isinstance(stmt.expression, StringNode):
+                                logger.error(f"Invalid return expression type in {node.name.value}:\n{self.dump_ast(stmt)}")
+                                raise InterpreterError(f"Invalid AST: Function {node.name.value} expected string return, got {type(stmt.expression).__name__}")
+                            has_valid_return = True
+                            break
+                    if not has_valid_return:
+                        logger.error(f"No valid return statement in {node.name.value}:\n{self.dump_ast(node.body)}")
+                        raise InterpreterError(f"Invalid AST: Function {node.name.value} with return type {node.return_type.value} must contain a valid return statement")
+                self.validate_ast(node.body)
         elif isinstance(node, BlockNode):
             for stmt in node.statements:
                 self.validate_ast(stmt)
@@ -358,6 +382,7 @@ class Interpreter:
         try:
             if self.debug:
                 logger.debug(f"Validating program AST")
+                logger.debug(f"Full Program AST:\n{self.dump_ast(node)}")
                 self.validate_ast(node)
             method_map = {
                 ProgramNode: self.interpret_program,
@@ -457,7 +482,22 @@ class Interpreter:
 
     def interpret_string(self, node: StringNode) -> str:
         """Interpret a string literal."""
-        return node.value[1:-1]
+        if not node.value.startswith('"') or not node.value.endswith('"'):
+            if self.debug:
+                logger.error(f"Invalid StringNode value: {node.value}")
+            raise InterpreterError(format_error(
+                "RuntimeError",
+                f"Invalid string literal in AST: {node.value}",
+                self.filename,
+                self.source,
+                node.token.line,
+                node.token.column,
+                token_length=len(node.value)
+            ))
+        result = node.value[1:-1]
+        if self.debug:
+            logger.debug(f"Interpreted StringNode: value={node.value}, result={result}")
+        return result
 
     def interpret_char(self, node: CharNode) -> str:
         """Interpret a character literal."""
@@ -470,6 +510,18 @@ class Interpreter:
     # --- Variables and Assignments ---
     def interpret_variable(self, node: VariableNode) -> Any:
         """Interpret a variable reference."""
+        if not node.variable.value.strip():
+            if self.debug:
+                logger.error(f"Invalid VariableNode with empty value:\n{self.dump_ast(node)}")
+            raise InterpreterError(format_error(
+                "RuntimeError",
+                "Invalid variable reference: empty identifier, likely a parser error for string literal",
+                self.filename,
+                self.source,
+                node.variable.line,
+                node.variable.column,
+                token_length=1
+            ))
         return self.get_variable(node.variable.value, node.variable.line, node.variable.column)
 
     def interpret_assign(self, node: AssignNode) -> Any:
@@ -924,12 +976,19 @@ class Interpreter:
                     param.name.column
                 )
             result = self.interpret(func.body)
+            if self.debug:
+                logger.debug(f"Function {func_name} body result: {result} (type: {type(result).__name__})")
             if isinstance(result, ReturnNode):
                 return_value = self.interpret_return(result)
+                if self.debug:
+                    logger.debug(f"Function {func_name} return value: {return_value} (type: {type(return_value).__name__})")
                 if func.return_type:
                     self.check_type(return_value, func.return_type, func.name.line, func.name.column)
                 return return_value
             if func.return_type and func.return_type.value != 'void':
+                if self.debug:
+                    logger.error(f"Function {func_name} did not return a value; expected {func.return_type.value}")
+                    logger.error(f"Function body AST:\n{self.dump_ast(func.body)}")
                 raise InterpreterError(format_error(
                     "RuntimeError",
                     f"Function {func_name} must return a value of type {func.return_type.value}",
@@ -1058,6 +1117,7 @@ class Interpreter:
             if method.return_type and method.return_type.value != 'void':
                 if self.debug:
                     logger.error(f"Method {method_name} did not return a value; expected {method.return_type.value}")
+                    logger.error(f"Method body AST (re-dumped):\n{self.dump_ast(method.body)}")
                 raise InterpreterError(format_error(
                     "RuntimeError",
                     f"Method {method_name} must return a value of type {method.return_type.value}",
@@ -1068,22 +1128,6 @@ class Interpreter:
                     token_length=len(method_name)
                 ))
             return None
-        except InterpreterError as e:
-            if self.debug:
-                logger.error(f"InterpreterError in method {method_name}: {str(e)}")
-            raise
-        except Exception as e:
-            if self.debug:
-                logger.error(f"Unexpected error in method {method_name}: {str(e)}")
-            raise InterpreterError(format_error(
-                "RuntimeError",
-                f"Error executing method {method_name}: {str(e)}",
-                self.filename,
-                self.source,
-                node.method.variable.line,
-                node.method.variable.column,
-                token_length=len(method_name)
-            ))
         finally:
             self.pop_scope()
             self.current_instance = prev_instance
@@ -1263,7 +1307,26 @@ class Interpreter:
     # --- Miscellaneous ---
     def interpret_return(self, node: ReturnNode) -> Any:
         """Interpret a return statement."""
-        value = self.interpret(node.expression) if node.expression else None
+        if node.expression:
+            if isinstance(node.expression, VariableNode) and not node.expression.variable.value.strip():
+                if self.debug:
+                    logger.error(f"Invalid return expression in ReturnNode:\n{self.dump_ast(node)}")
+                raise InterpreterError(format_error(
+                    "RuntimeError",
+                    "Invalid return expression: empty variable reference, expected string literal",
+                    self.filename,
+                    self.source,
+                    getattr(node, 'line', 1),
+                    getattr(node, 'column', 1),
+                    token_length=1
+                ))
+            value = self.interpret(node.expression)
+            if self.debug:
+                logger.debug(f"Interpreted return expression: {value} (type: {type(value).__name__}, node: {type(node.expression).__name__})")
+        else:
+            value = None
+            if self.debug:
+                logger.debug("Return statement with no expression, returning None")
         if self.debug:
             logger.debug(f"Returning value: {value} (type: {type(value).__name__})")
         return value
@@ -1344,29 +1407,16 @@ class Interpreter:
                 if self.debug:
                     logger.debug("Block is empty, returning None")
                 return None
-            for stmt in node.statements:
+            for i, stmt in enumerate(node.statements):
                 if self.debug:
-                    logger.debug(f"Interpreting statement: {type(stmt).__name__} at line {getattr(stmt, 'line', 'unknown')}, column {getattr(stmt, 'column', 'unknown')}")
+                    logger.debug(f"Interpreting statement {i+1}/{len(node.statements)}: {type(stmt).__name__} at line {getattr(stmt, 'line', 'unknown')}, column {getattr(stmt, 'column', 'unknown')}")
                     logger.debug(f"Statement AST:\n{self.dump_ast(stmt)}")
-                try:
-                    result = self.interpret(stmt)
-                except Exception as e:
-                    if self.debug:
-                        logger.error(f"Error interpreting statement {type(stmt).__name__}: {str(e)}")
-                    raise InterpreterError(format_error(
-                        "RuntimeError",
-                        f"Error interpreting statement {type(stmt).__name__}: {str(e)}",
-                        self.filename,
-                        self.source,
-                        getattr(stmt, 'line', 1),
-                        getattr(stmt, 'column', 1),
-                        token_length=1
-                    ))
+                result = self.interpret(stmt)
                 if self.debug:
-                    logger.debug(f"Statement result: {result} (type: {type(result).__name__})")
+                    logger.debug(f"Statement {i+1} result: {result} (type: {type(result).__name__})")
                 if isinstance(result, (ReturnNode, BreakNode, ContinueNode)):
                     if self.debug:
-                        logger.debug(f"Block statement returned control node: {type(result).__name__}")
+                        logger.debug(f"Block statement {i+1} returned control node: {type(result).__name__}")
                     if isinstance(result, ReturnNode):
                         return_value = self.interpret_return(result)
                         if self.debug:
@@ -1377,22 +1427,6 @@ class Interpreter:
             if self.debug:
                 logger.debug(f"Block completed with last result: {last_result} (type: {type(last_result).__name__})")
             return last_result
-        except InterpreterError as e:
-            if self.debug:
-                logger.error(f"InterpreterError in block: {str(e)}")
-            raise
-        except Exception as e:
-            if self.debug:
-                logger.error(f"Unexpected error in block: {str(e)}")
-            raise InterpreterError(format_error(
-                "RuntimeError",
-                f"Error in block: {str(e)}",
-                self.filename,
-                self.source,
-                getattr(node, 'line', 1),
-                getattr(node, 'column', 1),
-                token_length=1
-            ))
         finally:
             self.pop_scope()
 
