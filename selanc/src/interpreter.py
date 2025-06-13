@@ -604,19 +604,19 @@ class Interpreter:
         value = self.interpret(node.expr)
         self.check_modifiers(node.modifiers, node.variable.variable.line, node.variable.variable.column)
         if node.type_token:
-            self.check_type(value, node.type_token, node.variable.variable.line, node.variable.variable.column + token_length=1)
+            self.check_type(value, node.type_token, node.variable.variable.line, node.variable.variable.column + len(node.variable.variable.value) + 2)
         return self.set_variable(
             node.variable.variable.value,
             value,
             node.type_token,
             True,
-            node.type_token.is_nullable if node.type_token else False,
+            node.type_token.is_nullable if node.type_token else True,
             node.variable.variable.line,
             node.variable.variable.column
         )
 
     # --- Operators ---
-    def interpret_binary_op(self, node: BinaryOperationNode) -> None:
+    def interpret_binary_op(self, node: BinaryOperationNode) -> Any:
         """Interpret a binary operation."""
         left = self.interpret(node.left_node)
         right = self.interpret(node.right_node)
@@ -624,7 +624,7 @@ class Interpreter:
         operations = {
             'PLUS': lambda l, r: str(l) + str(r) if isinstance(l, str) or isinstance(r, str) else l + r,
             'MINUS': lambda l, r: l - r,
-            'MULTIPLY': r: lambda l, r: l * r,
+            'MULTIPLY': lambda l, r: l * r,
             'DIVIDE': lambda l, r: l / r if r != 0 else self.raise_division_by_zero(node.operator),
             'MODULO': lambda l, r: l % r,
             'EQUAL': lambda l, r: l == r,
@@ -645,7 +645,7 @@ class Interpreter:
             try:
                 result = operations[op](left, right)
                 if self.debug:
-                    logger.debug(f"Binary operation {op}: {left} {op} {right} = {result}")
+                    logger.debug(f"Binary op {op}: {left} {op} {right} = {result}")
                 return result
             except TypeError as e:
                 raise InterpreterError(format_error(
@@ -659,7 +659,7 @@ class Interpreter:
                 ))
         raise InterpreterError(format_error(
             "RuntimeError",
-            f"Unknown operation: {op}",
+            f"Unknown operator: {op}",
             self.filename,
             self.source,
             node.operator.line,
@@ -667,7 +667,7 @@ class Interpreter:
             token_length=1
         ))
 
-    def raise_division_by_zero(self, token: TokenType) -> None:
+    def raise_division_by_zero(self, token: Token) -> None:
         """Raise an error for division by zero."""
         raise InterpreterError(format_error(
             "RuntimeError",
@@ -676,21 +676,20 @@ class Interpreter:
             self.source,
             token.line,
             token.column,
-            token_length=1,
+            token_length=1
         ))
 
-    def raise_bitwise_error(self, op: str, r: Token):
-        """Raise TypeError for invalid bitwise operation."""
-        return InterpreterError(
-            format_error(
-                "RuntimeError",
-                f"Bitwise {op} requires integers",
-                self.filename,
-                self.source,
-                token.line,
-                token.column,
-                token_length=1
-            ))
+    def raise_bitwise_error(self, op: str, token: Token) -> None:
+        """Raise an error for invalid bitwise operation."""
+        raise InterpreterError(format_error(
+            "TypeError",
+            f"Bitwise {op} requires integers",
+            self.filename,
+            self.source,
+            token.line,
+            token.column,
+            token_length=1
+        ))
 
     def interpret_unary_op(self, node: UnaryOperationNode) -> Any:
         """Interpret a unary operation."""
@@ -707,178 +706,166 @@ class Interpreter:
                     node.operator.column,
                     token_length=1
                 ))
-            var_name = self.node.operand.variable.value
+            var_name = node.operand.variable.value
             old_value = self.get_variable(var_name, node.operand.variable.line, node.operand.variable.column)
-            if not isinstance(old_value, int) or isinstance(old_value, float)):
+            if not isinstance(old_value, (int, float)):
                 raise InterpreterError(format_error(
                     "TypeError",
-                    f"Postfix {op} requires a numeric value, got {type(old_value).__name__}",
+                    f"Postfix {op} requires numeric value, got {type(old_value).__name__}",
                     self.filename,
                     self.source,
                     node.operator.line,
                     node.operator.column,
-                    token_length=len(token),
+                    token_length=1
                 ))
-            new_value == old_value + 1 if op == 'INCREMENT' or old_value - 1 else old_value
+            new_value = old_value + 1 if op == 'INCREMENT' else old_value - 1
             self.set_variable(var_name, new_value, None, False, True, node.operand.variable.line, node.operand.variable.column)
-            return result_value
+            return old_value
         operations = {
-            'MINUS': lambda v: v - v,
+            'MINUS': lambda v: -v,
             'NOT': lambda v: not v,
-            'BIT_NOT': lambda v: v if isinstance(v, int) else self.raise_bitwise_error('NOT', node.operator),
-            'INCREMENT': lambda v: v + 1 if isinstance(v, int) or isinstance(v, float)) else self.raise_increment_error(node.operator),
-            'DECREMENT': lambda v: v - 1 if isinstance(v, int) or isinstance(v, float)) else self.raise_increment_error(node.operator)),
+            'BIT_NOT': lambda v: ~v if isinstance(v, int) else self.raise_bitwise_error('NOT', node.operator),
+            'INCREMENT': lambda v: v + 1 if isinstance(v, (int, float)) else self.raise_increment_error(node.operator),
+            'DECREMENT': lambda v: v - 1 if isinstance(v, (int, float)) else self.raise_increment_error(node.operator),
         }
         if op in operations:
             try:
                 result = operations[op](operand)
                 if self.debug:
-                    logger.debug(f"Unary operation {op}: {operand} = {result}")
+                    logger.debug(f"Unary op {op}: {operand} = {result}")
                 return result
             except TypeError as e:
-                raise InterpreterError(
-                    format_error(
-                    f"TypeError",
-                    f"Invalid type for {op}: {type(operand)__name__}",
+                raise InterpreterError(format_error(
+                    "TypeError",
+                    f"Invalid type for {op}: {type(operand).__name__}",
                     self.filename,
                     self.source,
                     node.operator.line,
                     node.operator.column,
-                    token_length=len(token),
+                    token_length=1
                 ))
         raise InterpreterError(format_error(
-            "TypeError",
-            f"Unknown unary operator {op}",
+            "RuntimeError",
+            f"Unknown unary operator: {op}",
             self.filename,
             self.source,
             node.operator.line,
             node.operator.column,
-            token_length=1,
+            token_length=1
         ))
 
-    def raise_increment_error(self, token: TokenType) -> None:
+    def raise_increment_error(self, token: Token) -> None:
         """Raise an error for invalid increment/decrement operation."""
-        raise InterpreterError(
-            format_error(
-                "TypeError",
-                "Increment/decrement requires a numeric value",
-                self.filename,
-                self.source,
-                token.line,
-                token.column,
-                token_length=1,
-            )
+        raise InterpreterError(format_error(
+            "TypeError",
+            "Increment/decrement requires numeric value",
+            self.filename,
+            self.source,
+            token.line,
+            token.column,
+            token_length=1
+        ))
 
     def interpret_null_coalesce(self, node: NullCoalesceNode) -> Any:
         """Interpret a null-coalescing operation (??)."""
         left = self.interpret(node.left_node)
-        return left if left != None else self.interpret(node.right_node)
+        return left if left is not None else self.interpret(node.right_node)
 
     def interpret_elvis(self, node: ElvisNode) -> Any:
-        """Interpret an Elvis operation (?::)."""
+        """Interpret an Elvis operation (?:)."""
         left = self.interpret(node.left_node)
-        return left if left != None else self.interpret(node.right_node)
+        return left if left is not None else self.interpret(node.right_node)
 
-    def interpret_if(self, node: IfNode) -> None:
+    # --- Control Structures ---
+    def interpret_if(self, node: IfNode) -> Any:
         """Interpret an if statement."""
         condition = self.interpret(node.condition)
         if not isinstance(condition, bool):
-            raise TypeError(
-                format_error(
-                    "TypeError",
-                    f"Condition must be boolean, got {type(condition).__name__}",
-                    self.filename,
-                    self.source,
-                    getattr(node.condition, 'line', token.line),
-                    getattr(node.condition, 'column', token.column),
-                    token_length=1,
-                ),
-
-            if condition:
-                return self.interpret(node.then_branch_node)
-            elif node.conditionelse_branch:
-                return self.interpret(node.else_branch_node)
-            else:
-                return None
+            raise InterpreterError(format_error(
+                "TypeError",
+                f"Condition must be boolean, got {type(condition).__name__}",
+                self.filename,
+                self.source,
+                getattr(node.condition, 'line', 1),
+                getattr(node.condition, 'column', 1),
+                token_length=1
+            ))
+        if condition:
+            return self.interpret(node.then_branch)
+        elif node.else_branch:
+            return self.interpret(node.else_branch)
+        return None
 
     def interpret_while(self, node: WhileNode) -> Any:
         """Interpret a while loop."""
         while True:
             condition = self.interpret(node.condition)
             if not isinstance(condition, bool):
-                raise TypeError(format_error(
+                raise InterpreterError(format_error(
                     "TypeError",
                     f"Condition must be boolean, got {type(condition).__name__}",
                     self.filename,
                     self.source,
-                    getattr(node.condition, 'line', token.line),
-                    getattr(node.condition, 'column', token.column),
-                    token_length=1,
+                    getattr(node.condition, 'line', 1),
+                    getattr(node.condition, 'column', 1),
+                    token_length=1
                 ))
             if not condition:
                 break
             result = self.interpret(node.body)
             if isinstance(result, BreakNode):
                 break
-            elif isinstance(result, ReturnNodeError):
+            elif isinstance(result, ReturnNode):
                 return self.interpret_return(result)
             elif isinstance(result, ContinueNode):
                 continue
         return None
 
-    def interpret_do_while(self, node: DoWhileNode) -> None:
+    def interpret_do_while(self, node: DoWhileNode) -> Any:
         """Interpret a do-while loop."""
         while True:
-            try:
-                result = self.interpret(node.body)
-                if isinstance(result, BreakNode):
-                    break
-                elif isinstance(result, ReturnNodeError):
-                    return self.interpret_return(result)
-                elif isinstance(result, ContinueNode):
-                    continue
-                condition_continue = self.interpret(node.condition)
-                if not isinstance(condition, bool):
-                    raise TypeError(format_error(
-                        "TypeError",
-                        f"Condition must be boolean, got {type(condition).__name__}",
-                        self.filename,
-                        self.source,
-                        getattr(node.condition, 'line', token.line),
-                        getattr(node.condition, 'column', token.column),
-                        token_length=1,
-                        ))
-
-                if not condition:
-                    break
-            except:
+            result = self.interpret(node.body)
+            if isinstance(result, BreakNode):
+                break
+            elif isinstance(result, ReturnNode):
+                return self.interpret_return(result)
+            elif isinstance(result, ContinueNode):
+                continue
+            condition = self.interpret(node.condition)
+            if not isinstance(condition, bool):
+                raise InterpreterError(format_error(
+                    "TypeError",
+                    f"Condition must be boolean, got {type(condition).__name__}",
+                    self.filename,
+                    self.source,
+                    getattr(node.condition, 'line', 1),
+                    getattr(node.condition, 'column', 1),
+                    token_length=1
+                ))
+            if not condition:
                 break
         return None
 
-    def interpret_for(self(self, node: ForNode) -> Any:
+    def interpret_for(self, node: ForNode) -> Any:
         """Interpret a for loop."""
         if node.init:
             self.interpret(node.init)
-            elif isinstance(node.init, None):
-                pass
         self.push_scope()
         try:
-            while node.cond == None or self.interpret(node.cond):
-                result = self._interpret(node.body)
+            while node.cond is None or self.interpret(node.cond):
+                result = self.interpret(node.body)
                 if isinstance(result, BreakNode):
                     break
-                elif isinstance(result, ReturnNodeError):
-                    return result
+                elif isinstance(result, ReturnNode):
+                    return self.interpret_return(result)
                 elif isinstance(result, ContinueNode):
                     if node.step:
                         self.interpret(node.step)
                     continue
-                elif node.step:
+                if node.step:
                     self.interpret(node.step)
-                else:
-                    pass
             return None
-        except:
+        finally:
             self.pop_scope()
 
     def interpret_switch(self, node: SwitchNode) -> Any:
