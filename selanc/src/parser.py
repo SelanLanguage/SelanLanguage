@@ -742,7 +742,6 @@ class Parser:
         return self.parse_primary()
 
     def parse_primary(self) -> ExpressionNode:
-        """Parses a primary expression."""
         if not self.current_token:
             raise SyntaxError(format_error(
                 "SyntaxError",
@@ -755,11 +754,23 @@ class Parser:
             ))
 
         token = self.current_token
+        if self.debug:
+            logger.debug(f"Parsing primary token: type={token.type.name}, value={token.value!r}, line={token.line}, column={token.column}")
         self.advance()
 
         if token.type.name == 'NUMBER':
             return NumberNode(token)
         elif token.type.name == 'STRING':
+            if not token.value.startswith('"') or not token.value.endswith('"'):
+                raise SyntaxError(format_error(
+                    "SyntaxError",
+                    f"Invalid string literal: {token.value}",
+                    self.filename,
+                    self.source,
+                    token.line,
+                    token.column,
+                    token_length=len(token.value) if token.value else 1
+                ))
             return StringNode(token)
         elif token.type.name == 'CHAR':
             return CharNode(token)
@@ -779,6 +790,16 @@ class Parser:
             self.expect('RPAREN')
             return InputNode(token, prompt)
         elif token.type.name == 'VARIABLE':
+            if not token.value.strip():
+                raise SyntaxError(format_error(
+                    "SyntaxError",
+                    "Empty variable identifier",
+                    self.filename,
+                    self.source,
+                    token.line,
+                    token.column,
+                    token_length=1
+                ))
             keyword_values = {
                 'print', 'if', 'else', 'while', 'for', 'do', 'switch', 'case', 'default', 'return', 'fun',
                 'class', 'interface', 'enum', 'var', 'val', 'const', 'break', 'continue', 'try', 'catch',
