@@ -306,6 +306,8 @@ class Interpreter:
                 result.append(self.dump_ast(expr, indent + 1))
         elif isinstance(node, StringNode):
             result.append(f"{indent_str}{type(node).__name__}: value={node.value} (line={line}, col={column})")
+        elif isinstance(node, VariableNode):
+            result.append(f"{indent_str}{type(node).__name__}: value={node.variable.value!r} (line={line}, col={column})")
         elif isinstance(node, (ClassNode, VarDeclarationNode, PrintNode, NewNode, MemberCallNode)):
             result.append(f"{indent_str}{type(node).__name__}: (line={line}, col={column})")
             for attr in ['name', 'variable', 'expression', 'obj', 'method']:
@@ -319,7 +321,7 @@ class Interpreter:
                         result.append(self.dump_ast(item, indent + 1))
         else:
             value = getattr(node, 'value', '')
-            result.append(f"{indent_str}{type(node).__name__}: value={value} (line={line}, col={column})")
+            result.append(f"{indent_str}{type(node).__name__}: value={value!r} (line={line}, col={column})")
         return "\n".join(result)
 
     def validate_ast(self, node: ExpressionNode) -> None:
@@ -330,27 +332,38 @@ class Interpreter:
             if not isinstance(node.body, (BlockNode, ReturnNode)):
                 raise InterpreterError(f"Invalid AST: Function {node.name.value} body must be BlockNode or ReturnNode, got {type(node.body).__name__}")
             if node.return_type and node.return_type.value != 'void':
-                has_return = False
+                has_valid_return = False
                 if isinstance(node.body, ReturnNode):
-                    if node.body.expression:
-                        if isinstance(node.body.expression, VariableNode) and not node.body.expression.variable.value:
-                            raise InterpreterError(f"Invalid AST: Function {node.name.value} return expression is an empty VariableNode")
-                        has_return = True
-                    else:
+                    if not node.body.expression:
                         raise InterpreterError(f"Invalid AST: Function {node.name.value} with return type {node.return_type.value} has no return expression")
+                    if isinstance(node.body.expression, VariableNode):
+                        if not node.body.expression.variable.value.strip():
+                            logger.error(f"Invalid return expression in {node.name.value}:\n{self.dump_ast(node.body)}")
+                            raise InterpreterError(f"Invalid AST: Function {node.name.value} return expression is an empty or invalid VariableNode")
+                        # Allow non-empty VariableNode for now, validate during interpretation
+                    if node.return_type.value == 'string' and not isinstance(node.body.expression, (StringNode, VariableNode)):
+                        logger.error(f"Invalid return expression type in {node.name.value}:\n{self.dump_ast(node.body)}")
+                        raise InterpreterError(f"Invalid AST: Function {node.name.value} expected string return, got {type(node.body.expression).__name__}")
+                    has_valid_return = True
                 elif isinstance(node.body, BlockNode):
                     for stmt in node.body.statements:
                         if isinstance(stmt, ReturnNode):
-                            if stmt.expression:
-                                if isinstance(stmt.expression, VariableNode) and not stmt.expression.variable.value:
-                                    raise InterpreterError(f"Invalid AST: Function {node.name.value} return expression is an empty VariableNode")
-                                has_return = True
-                            else:
+                            if not stmt.expression:
                                 raise InterpreterError(f"Invalid AST: Function {node.name.value} with return type {node.return_type.value} has no return expression")
+                            if isinstance(stmt.expression, VariableNode):
+                                if not stmt.expression.variable.value.strip():
+                                    logger.error(f"Invalid return expression in {node.name.value}:\n{self.dump_ast(stmt)}")
+                                    raise InterpreterError(f"Invalid AST: Function {node.name.value} return expression is an empty or invalid VariableNode")
+                                # Allow non-empty VariableNode for now
+                            if node.return_type.value == 'string' and not isinstance(stmt.expression, (StringNode, VariableNode)):
+                                logger.error(f"Invalid return expression type in {node.name.value}:\n{self.dump_ast(stmt)}")
+                                raise InterpreterError(f"Invalid AST: Function {node.name.value} expected string return, got {type(stmt.expression).__name__}")
+                            has_valid_return = True
                             break
-                if not has_return:
-                    raise InterpreterError(f"Invalid AST: Function {node.name.value} with return type {node.return_type.value} must contain a valid return statement")
-            self.validate_ast(node.body)
+                    if not has_valid_return:
+                        logger.error(f"No valid return statement in {node.name.value}:\n{self.dump_ast(node.body)}")
+                        raise InterpreterError(f"Invalid AST: Function {node.name.value} with return type {node.return_type.value} must contain a valid return statement")
+                self.validate_ast(node.body)
         elif isinstance(node, BlockNode):
             for stmt in node.statements:
                 self.validate_ast(stmt)
@@ -492,6 +505,18 @@ class Interpreter:
     # --- Variables and Assignments ---
     def interpret_variable(self, node: VariableNode) -> Any:
         """Interpret a variable reference."""
+        if not node.variable.value.strip():
+            if self.debug:
+                logger.error(f"Invalid VariableNode with empty value:\n{self.dump_ast(node)}")
+            raise InterpreterError(format_error(
+                "RuntimeError",
+                "Invalid variable reference: empty identifier, likely a parser error for string literal",
+                self.filename,
+                self.source,
+                node.variable.line,
+                node.variable.column,
+                token_length=1
+            ))
         return self.get_variable(node.variable.value, node.variable.line, node.variable.column)
 
     def interpret_assign(self, node: AssignNode) -> Any:
@@ -1291,9 +1316,9 @@ class Interpreter:
     def interpret_return(self, node: ReturnNode) -> Any:
         """Interpret a return statement."""
         if node.expression:
-            if isinstance(node.expression, VariableNode) and not node.expression.variable.value:
+            if isinstance(node.expression, VariableNode) and not node.expression.variable.value.strip():
                 if self.debug:
-                    logger.warning(f"Return expression is an empty VariableNode, likely a parser error for string literal")
+                    logger.error(f"Invalid return expression in ReturnNode:\n{self.dump_ast(node)}")
                 raise InterpreterError(format_error(
                     "RuntimeError",
                     "Invalid return expression: empty variable reference, expected string literal",
