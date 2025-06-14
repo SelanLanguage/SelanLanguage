@@ -40,7 +40,7 @@ class InterpreterError(Exception):
     pass
 
 class Interpreter:
-    """Interprets an AST for the Selan language, supporting classes, methods, and type checking."""
+    """Interprets an AST for the Selan language, supporting classes, methods, type checking, and file handling."""
     
     def __init__(self, source: str, filename: str, debug: bool = True):
         """Initialize the interpreter with source code and filename."""
@@ -66,6 +66,176 @@ class Interpreter:
             "void": TypeCategory.VOID,
             "any": TypeCategory.ANY,
         }
+        # Initialize built-in functions for file handling
+        self.built_ins: Dict[str, Callable] = {
+            'print': lambda args: print(args[0]) if len(args) == 1 else None,
+            'input': lambda args: input(args[0] if args else ""),
+            'file_open': self.file_open,
+            'file_read': self.file_read,
+            'file_write': self.file_write,
+            'file_close': self.file_close,
+        }
+        for name, func in self.built_ins.items():
+            self.scopes[0][name] = VariableInfo(func, None, True, False)
+            if self.debug:
+                logger.debug(f"Initialized built-in function: {name}")
+
+    # --- File Handling Built-in Functions ---
+    def file_open(self, args: List[Any]) -> FileNode:
+        """Handle file_open(filename, mode) built-in function."""
+        if not (1 <= len(args) <= 2):
+            raise InterpreterError(format_error(
+                "ArgumentError",
+                f"file_open expects 1-2 arguments, got {len(args)}",
+                self.filename,
+                self.source,
+                1, 1,  # Default position for built-ins
+                token_length=len("file_open")
+            ))
+        filename = args[0]
+        mode = args[1] if len(args) > 1 else 'r'
+        if not isinstance(filename, str) or not isinstance(mode, str):
+            raise InterpreterError(format_error(
+                "TypeError",
+                "file_open expects string arguments",
+                self.filename,
+                self.source,
+                1, 1,
+                token_length=len("file_open")
+            ))
+        valid_modes = {'r', 'w', 'a', 'r+', 'w+', 'a+'}
+        if mode not in valid_modes:
+            raise InterpreterError(format_error(
+                "ValueError",
+                f"Invalid mode '{mode}', expected one of {valid_modes}",
+                self.filename,
+                self.source,
+                1, 1,
+                token_length=len("file_open")
+            ))
+        try:
+            file_obj = open(filename, mode)
+            token = Token(token_types_list['VARIABLE'], 'file_open', 0, 1, 1)  # Dummy token
+            file_node = FileNode(file_obj, token)
+            if self.debug:
+                logger.debug(f"Opened file: {filename} in mode {mode}")
+            return file_node
+        except IOError as e:
+            raise InterpreterError(format_error(
+                "IOError",
+                f"Failed to open file {filename}: {str(e)}",
+                self.filename,
+                self.source,
+                1, 1,
+                token_length=len("file_open")
+            ))
+
+    def file_read(self, args: List[Any]) -> str:
+        """Handle file_read(file) built-in function."""
+        if len(args) != 1 or not isinstance(args[0], FileNode):
+            raise InterpreterError(format_error(
+                "ArgumentError",
+                "file_read expects a single File object",
+                self.filename,
+                self.source,
+                1, 1,
+                token_length=len("file_read")
+            ))
+        file_node = args[0]
+        if not file_node.file_obj or file_node.file_obj.closed:
+            raise InterpreterError(format_error(
+                "IOError",
+                "Cannot read from closed or invalid file",
+                self.filename,
+                self.source,
+                1, 1,
+                token_length=len("file_read")
+            ))
+        try:
+            content = file_node.file_obj.read()
+            if self.debug:
+                logger.debug(f"Read from file: {content}")
+            return content
+        except IOError as e:
+            raise InterpreterError(format_error(
+                "IOError",
+                f"Failed to read file: {str(e)}",
+                self.filename,
+                self.source,
+                1, 1,
+                token_length=len("file_read")
+            ))
+
+    def file_write(self, args: List[Any]) -> None:
+        """Handle file_write(file, data) built-in function."""
+        if len(args) != 2 or not isinstance(args[0], FileNode) or not isinstance(args[1], str):
+            raise InterpreterError(format_error(
+                "ArgumentError",
+                "file_write expects a File object and a string",
+                self.filename,
+                self.source,
+                1, 1,
+                token_length=len("file_write")
+            ))
+        file_node = args[0]
+        data = args[1]
+        if not file_node.file_obj or file_node.file_obj.closed:
+            raise InterpreterError(format_error(
+                "IOError",
+                "Cannot write to closed or invalid file",
+                self.filename,
+                self.source,
+                1, 1,
+                token_length=len("file_write")
+            ))
+        try:
+            file_node.file_obj.write(data)
+            if self.debug:
+                logger.debug(f"Wrote to file: {data}")
+        except IOError as e:
+            raise InterpreterError(format_error(
+                "IOError",
+                f"Failed to write to file: {str(e)}",
+                self.filename,
+                self.source,
+                1, 1,
+                token_length=len("file_write")
+            ))
+
+    def file_close(self, args: List[Any]) -> None:
+        """Handle file_close(file) built-in function."""
+        if len(args) != 1 or not isinstance(args[0], FileNode):
+            raise InterpreterError(format_error(
+                "ArgumentError",
+                "file_close expects a single File object",
+                self.filename,
+                self.source,
+                1, 1,
+                token_length=len("file_close")
+            ))
+        file_node = args[0]
+        if not file_node.file_obj or file_node.file_obj.closed:
+            raise InterpreterError(format_error(
+                "IOError",
+                "File is already closed or invalid",
+                self.filename,
+                self.source,
+                1, 1,
+                token_length=len("file_close")
+            ))
+        try:
+            file_node.file_obj.close()
+            if self.debug:
+                logger.debug("Closed file")
+        except IOError as e:
+            raise InterpreterError(format_error(
+                "IOError",
+                f"Failed to close file: {str(e)}",
+                self.filename,
+                self.source,
+                1, 1,
+                token_length=len("file_close")
+            ))
 
     # --- Scope Management ---
     def push_scope(self) -> None:
@@ -308,6 +478,8 @@ class Interpreter:
             result.append(f"{indent_str}{type(node).__name__}: value={node.value} (line={line}, col={column})")
         elif isinstance(node, VariableNode):
             result.append(f"{indent_str}{type(node).__name__}: value={node.variable.value!r} (line={line}, col={column})")
+        elif isinstance(node, FileNode):
+            result.append(f"{indent_str}{type(node).__name__}: file_obj={'open' if node.file_obj and not node.file_obj.closed else 'closed'} (line={line}, col={column})")
         elif isinstance(node, (ClassNode, VarDeclarationNode, PrintNode, NewNode, MemberCallNode)):
             result.append(f"{indent_str}{type(node).__name__}: (line={line}, col={column})")
             for attr in ['name', 'variable', 'expression', 'obj', 'method']:
@@ -365,7 +537,7 @@ class Interpreter:
                 if hasattr(node, attr):
                     for item in getattr(node, attr, []):
                         self.validate_ast(item)
-        elif isinstance(node, (VarDeclarationNode, PrintNode, NewNode, MemberCallNode)):
+        elif isinstance(node, (VarDeclarationNode, PrintNode, NewNode, MemberCallNode, FileNode)):
             for attr in ['expr', 'expression', 'obj', 'method']:
                 if hasattr(node, attr):
                     val = getattr(node, attr)
@@ -425,6 +597,7 @@ class Interpreter:
                 ContinueNode: lambda n: n,
                 ThisNode: self.interpret_this,
                 SuperNode: self.interpret_super,
+                FileNode: self.interpret_file_node,
             }
             for node_type, handler in method_map.items():
                 if isinstance(node, node_type):
@@ -506,6 +679,23 @@ class Interpreter:
     def interpret_boolean(self, node: BooleanNode) -> bool:
         """Interpret a boolean literal."""
         return node.value.lower() == 'true'
+
+    # --- File Node ---
+    def interpret_file_node(self, node: FileNode) -> FileNode:
+        """Interpret a FileNode, returning the file object wrapper."""
+        if not node.file_obj or node.file_obj.closed:
+            raise InterpreterError(format_error(
+                "RuntimeError",
+                "Invalid or closed file object",
+                self.filename,
+                self.source,
+                node.token.line,
+                node.token.column,
+                token_length=len(node.token.value)
+            ))
+        if self.debug:
+            logger.debug(f"Interpreted FileNode: file_obj={'open' if not node.file_obj.closed else 'closed'}")
+        return node
 
     # --- Variables and Assignments ---
     def interpret_variable(self, node: VariableNode) -> Any:
@@ -926,8 +1116,29 @@ class Interpreter:
             logger.debug(f"Defined function {node.name.value}")
 
     def interpret_function_call(self, node: FunctionCallNode) -> Any:
-        """Interpret a function call."""
+        """Interpret a function call, including built-in functions."""
         func_name = node.func.variable.value
+        args = [self.interpret(arg) for arg in node.args]
+        # Check for built-in functions
+        if func_name in self.built_ins:
+            try:
+                result = self.built_ins[func_name](args)
+                if self.debug:
+                    logger.debug(f"Called built-in function {func_name} with args {args}, returned {result}")
+                return result
+            except InterpreterError:
+                raise
+            except Exception as e:
+                raise InterpreterError(format_error(
+                    "RuntimeError",
+                    f"Built-in function {func_name} failed: {str(e)}",
+                    self.filename,
+                    self.source,
+                    node.func.variable.line,
+                    node.func.variable.column,
+                    token_length=len(func_name)
+                ))
+        # Check for user-defined functions
         if func_name not in self.functions:
             raise InterpreterError(format_error(
                 "RuntimeError",
@@ -940,7 +1151,6 @@ class Interpreter:
             ))
         func = self.functions[func_name]
         self.check_modifiers(func.modifiers, node.func.variable.line, node.func.variable.column)
-        args = [self.interpret(arg) for arg in node.args]
         if len(args) != len(func.params):
             raise InterpreterError(format_error(
                 "TypeError",

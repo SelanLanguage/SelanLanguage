@@ -10,16 +10,16 @@ from .ast import (
     ThrowNode, InterfaceNode, EnumNode, NumberNode, StringNode,
     CharNode, BooleanNode, NullNode, ThisNode, SuperNode, AssignNode,
     BinaryOperationNode, UnaryOperationNode, NullCoalesceNode, ElvisNode,
-    InputNode, LambdaNode, FunctionCallNode, InstanceOfNode
+    InputNode, LambdaNode, FunctionCallNode, InstanceOfNode, FileNode
 )
 from .error import format_error
 import logging
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.DEBUG, filename='debug.log', filemode='w')
 logger = logging.getLogger(__name__)
 
 class Parser:
-    """Parses a list of tokens into an AST for a strongly-typed language with Python-like imports."""
+    """Parses a list of tokens into an AST for the Selan language."""
     
     def __init__(self, tokens: List[Token], source: str, filename: str, debug: bool = True):
         self.tokens = tokens
@@ -100,7 +100,7 @@ class Parser:
         ))
 
     def parse(self) -> ProgramNode:
-        """Parses the entire program into a ProgramNode with imports and statements."""
+        """Parses the entire program into a ProgramNode."""
         return self.parse_program()
 
     def parse_program(self) -> ProgramNode:
@@ -286,20 +286,9 @@ class Parser:
                 token_length=1
             ))
         type_token = self.current_token
-        if type_token.type.name in ('INT', 'FLOAT', 'DOUBLE', 'BOOLEAN', 'STRING_TYPE', 'VOID', 'ANY'):
-            self.advance()
-            is_nullable = self.current_token and self.current_token.type.name == 'NULLABLE'
-            if is_nullable:
-                self.advance()
-            return Token(type_token.type, type_token.value, type_token.position, type_token.line, type_token.column, is_nullable)
-        elif type_token.type.name == 'VARIABLE' and type_token.value == 'str':
-            type_token = Token(token_types_list['STRING_TYPE'], 'string', type_token.position, type_token.line, type_token.column)
-            self.advance()
-            is_nullable = self.current_token and self.current_token.type.name == 'NULLABLE'
-            if is_nullable:
-                self.advance()
-            return Token(type_token.type, type_token.value, type_token.position, type_token.line, type_token.column, is_nullable)
-        elif type_token.type.name == 'VARIABLE':
+        if type_token.type.name in ('INT', 'FLOAT', 'DOUBLE', 'BOOLEAN', 'STRING_TYPE', 'VOID', 'ANY', 'VARIABLE'):
+            if type_token.type.name == 'VARIABLE' and type_token.value == 'str':
+                type_token = Token(token_types_list['STRING_TYPE'], 'string', type_token.position, type_token.line, type_token.column)
             self.advance()
             is_nullable = self.current_token and self.current_token.type.name == 'NULLABLE'
             if is_nullable:
@@ -566,7 +555,7 @@ class Parser:
             logger.debug(f"parse_return_statement: After RETURN, current token: type={self.current_token.type.name if self.current_token else 'None'}, value={repr(self.current_token.value) if self.current_token else 'None'}, line={self.current_token.line if self.current_token else -1}, column={self.current_token.column if self.current_token else -1}, pos={self.pos}")
         expr = None
         if self.current_token and self.current_token.type.name != 'SEMICOLON':
-            if self.current_token.type.name == 'STRING':  # Safeguard for string literals
+            if self.current_token.type.name == 'STRING':
                 token = self.current_token
                 self.advance()
                 if not token.value.startswith('"') or not token.value.endswith('"'):
@@ -875,7 +864,7 @@ class Parser:
         ))
 
     def parse_function_call(self, func_token: Token) -> FunctionCallNode:
-        """Parses a function call."""
+        """Parses a function call, including file handling functions."""
         self.expect('LPAREN')
         args = []
         if self.current_token and self.current_token.type.name != 'RPAREN':
@@ -884,4 +873,17 @@ class Parser:
                 self.advance()
                 args.append(self.parse_expression())
         self.expect('RPAREN')
+        # Special handling for file_open to return FileNode
+        if func_token.value == 'file_open':
+            if len(args) < 1 or len(args) > 2:
+                raise SyntaxError(format_error(
+                    "SyntaxError",
+                    f"file_open expects 1-2 arguments, got {len(args)}",
+                    self.filename,
+                    self.source,
+                    func_token.line,
+                    func_token.column,
+                    token_length=len(func_token.value)
+                ))
+            return FileNode(None, func_token)  # file_obj will be set by interpreter
         return FunctionCallNode(VariableNode(func_token), args)

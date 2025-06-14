@@ -6,8 +6,8 @@ import logging
 from .token import Token, TokenType, token_types_list, token_types
 from .error import format_error
 
-# Configure logging for debugging
-logging.basicConfig(level=logging.INFO)
+# Configure logging to write to tokens.log
+logging.basicConfig(level=logging.INFO, filename='tokens.log', filemode='w')
 logger = logging.getLogger(__name__)
 
 class LexerError(Exception):
@@ -132,9 +132,9 @@ class Lexer:
         TokenSpec("RBRACKET", token_types_list["RBRACKET"], r"\]", TokenCategory.PUNCTUATION),
         
         # Literals
-        TokenSpec("NUMBER", token_types_list["NUMBER"], r"\d+(\.\d+)?([eE][+-]?\d+)?", TokenCategory.LITERAL),
-        TokenSpec("STRING", token_types_list["STRING"], r"\"[^\"]*\"", TokenCategory.LITERAL),
-        TokenSpec("CHAR", token_types_list["CHAR"], r"'[^']'", TokenCategory.LITERAL),
+        TokenSpec("NUMBER", token_types_list["NUMBER"], r"-?\d+(\.\d+)?([eE][+-]?\d+)?", TokenCategory.LITERAL),
+        TokenSpec("STRING", token_types_list["STRING"], r'"[^"\n]*"', TokenCategory.LITERAL),  # Enforce double quotes
+        TokenSpec("CHAR", token_types_list["CHAR"], r"'[^'\n]'", TokenCategory.LITERAL),
         
         # Whitespace and Comments
         TokenSpec("SPACE", token_types_list["SPACE"], r"[ \t\r\n]+", TokenCategory.WHITESPACE, skip=True),
@@ -171,12 +171,12 @@ class Lexer:
     def lex_analysis(self) -> List[Token]:
         """Tokenizes the source code and writes tokens to tokens.log."""
         try:
+            while self.next_token():
+                pass
+            self.token_list.append(Token(token_types_list["EOF"], "", self.pos, self.line, self.column))
             with open('tokens.log', 'w', encoding='utf-8') as f:
-                while self.next_token():
-                    token = self.token_list[-1]
+                for token in self.token_list:
                     f.write(f"Token: type={token.type.name}, value={token.value!r}, line={token.line}, column={token.column}\n")
-                self.token_list.append(Token(token_types_list["EOF"], "", self.pos, self.line, self.column))
-                f.write(f"Token: type=EOF, value='', line={self.line}, column={self.column}\n")
             # Validate tokens before returning
             self.validate_tokens()
             return [token for token in self.token_list if not self._is_skipped_token(token)]

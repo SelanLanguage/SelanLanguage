@@ -1,0 +1,35 @@
+# --- File Open Operation ---
+# file_open(filename, mode) opens a file with the specified name and mode
+# Mode "w" creates or overwrites the file for writing
+# Returns a File object that we store in the 'file' variable
+file = file_open("example.txt", "w");
+
+# --- File Write Operation ---
+# file_write(file, data) writes the specified string data to the file
+# Here, we write a sample message to example.txt
+file_write(file, "Welcome to Selan Programming!\nThis is a test file.");
+
+# --- File Close Operation (after writing) ---
+# file_close(file) closes the file to free system resources
+# Always close files after writing to ensure data is saved
+file_close(file);
+
+# --- File Open Operation (for reading) ---
+# Reopen the file in read mode ("r") to read its contents
+# This demonstrates opening the same file again with a different mode
+file = file_open("example.txt", "r");
+
+# --- File Read Operation ---
+# file_read(file) reads the entire content of the file as a string
+# Store the content in a variable for display
+var content = file_read(file);
+
+# Print the file content to verify the read operation
+# The print function outputs the string to the console
+print("File content:");
+print(content);
+
+# --- File Close Operation (after reading) ---
+# Close the file after reading to free resources
+# Proper file closure prevents resource leaks
+file_close(file);

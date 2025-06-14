@@ -1,5 +1,5 @@
 from abc import ABC
-from typing import List, Optional
+from typing import List, Optional, Any
 from .token import Token, TokenType
 
 class ExpressionNode(ABC):
@@ -8,6 +8,16 @@ class ExpressionNode(ABC):
         self.line: int = line
         self.column: int = column
 
+class FileNode(ExpressionNode):
+    def __init__(self, file_obj: Any, token: Token):
+        super().__init__(token.line, token.column)
+        self.file_obj = file_obj  # Holds Python file object
+        self.token = token
+
+    def __repr__(self):
+        return f"FileNode(file_obj={self.file_obj}, line={self.line}, col={self.column})"
+
+# Include all other nodes from the provided ast.py without changes
 class NumberNode(ExpressionNode):
     def __init__(self, token: Token):
         super().__init__(token.line, token.column)
